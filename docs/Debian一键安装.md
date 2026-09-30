@@ -35,7 +35,7 @@ apt-get install -y ca-certificates curl
 下载并运行固定版本：
 
 ```sh
-curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 https://raw.githubusercontent.com/coexacx/yuji-probe/v0.6.0/install.sh -o /root/yuji-install.sh && bash /root/yuji-install.sh
+curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 https://raw.githubusercontent.com/coexacx/yuji-probe/v0.6.1/install.sh -o /root/yuji-install.sh && bash /root/yuji-install.sh
 ```
 
 也可以先用 `less /root/yuji-install.sh` 查看脚本，再执行 `bash /root/yuji-install.sh`。

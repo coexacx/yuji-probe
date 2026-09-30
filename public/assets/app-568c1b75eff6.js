@@ -1,4 +1,4 @@
-import {initAdmin} from "/assets/admin-56cd1b7d3b03.js";
+import {initAdmin} from "/assets/admin-e9036ccf86ea.js";
 import {countryByCode,normalizedCountry} from "/assets/countries-3dabb5bbec57.js";
 import {createNetworkUI} from "/assets/network-07924d16c6d9.js";
 

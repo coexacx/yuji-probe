@@ -25,7 +25,7 @@
 在 root 的 SSH 终端执行：
 
 ```sh
-curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 https://raw.githubusercontent.com/coexacx/yuji-probe/v0.6.0/install.sh -o /root/yuji-install.sh && bash /root/yuji-install.sh
+curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 https://raw.githubusercontent.com/coexacx/yuji-probe/v0.6.1/install.sh -o /root/yuji-install.sh && bash /root/yuji-install.sh
 ```
 
 脚本询问域名、站点名称、管理员用户名与密码，随后自动安装 Nginx、PHP-FPM，申请 Let's Encrypt 证书，配置 HTTPS/WSS 和证书续期，并启动主控。密码输入不回显，不放入命令行、环境变量或明文配置。
@@ -34,7 +34,7 @@ curl -fL --proto '=https' --proto-redir '=https' --tlsv1.2 https://raw.githubuse
 
 ## 宝塔手动部署
 
-从 [v0.6.0 Release](https://github.com/coexacx/yuji-probe/releases/tag/v0.6.0) 下载 **yuji-probe-panel-0.6.0.zip**。它包含 PHP、前端源码、Rust 源码和两种架构的主控二进制。
+从 [v0.6.1 Release](https://github.com/coexacx/yuji-probe/releases/tag/v0.6.1) 下载 **yuji-probe-panel-0.6.1.zip**。它包含 PHP、前端源码、Rust 源码和两种架构的主控二进制。
 
 解压到独立站点目录，安装 Nginx 和 PHP 8.0+（新部署建议 PHP 8.4），运行目录设为 `public/`。按[手把手教程](docs/宝塔部署教程.md)配置 HTTPS、WSS 与目录权限，再使用服务器内的一次性链接打开网页安装向导。
 
@@ -44,7 +44,7 @@ GitHub 的 Code → Download ZIP 和自动生成的 Source code 压缩包**不�
 
 | 组件 | 版本 | 发布位置 |
 | --- | --- | --- |
-| 界面 / 主控 | 0.6.0 | 本仓库 v0.6.0 Release |
+| 界面 / 主控 | 0.6.1 | 本仓库 v0.6.1 Release |
 | Rust Agent | 0.2.0 | 同一 Release 的 amd64 / arm64 二进制 |
 
 主控锁定本次 Release 的 Agent 清单地址，支持 GitHub 的 HTTPS 下载跳转，只接受 GitHub 发布域名。下载后核对签名、版本、架构、文件名、长度和 SHA-256；失败即终止部署。无需 GitHub 账号或 Token，不依赖原私有下载站点。
@@ -59,4 +59,4 @@ GitHub 的 Code → Download ZIP 和自动生成的 Source code 压缩包**不�
 - 当前有一个上游 RSA 依赖告警。现有部署使用 Ed25519 私钥，受影响的 RSA 私钥操作不在当前调用路径；这不等于依赖告警已经修复。详见 [安全说明](docs/RUST-SECURITY.md)。
 - 0.5.0 对公开看板使用共享序列化快照，减少重复 JSON 构造。吞吐与资源占用以同条件 200 节点 / 200 客户端复测报告为准，保留旧版报告用于对照。
 
-[0.6.0 变更与验收](docs/验收-0.6.0.md)；[0.5.0 性能对照报告](docs/验收-0.5.0.md)注明实际测试与尚未验证的范围。ARM64 编译支持与真机验收是两回事。
+[0.6.1 修复与验收](docs/验收-0.6.1.md)；[0.6.0 功能验收](docs/验收-0.6.0.md)；[0.5.0 性能对照报告](docs/验收-0.5.0.md)注明实际测试与尚未验证的范围。ARM64 编译支持与真机验收是两回事。

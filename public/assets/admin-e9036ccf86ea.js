@@ -1,7 +1,7 @@
 import {createInspectorUI} from "/assets/inspector-5d14e98d3224.js";
 import {createOperations} from "/assets/operations-2a02f5588e43.js";
 import {authenticatorCanvas} from "/assets/authenticator-19965621ba87.js";
-import {createTerminalUI} from "/assets/terminal-e29585650c5a.js";
+import {createTerminalUI} from "/assets/terminal-c2904a8743fa.js";
 import {countries as allCountries} from "/assets/countries-3dabb5bbec57.js";
 import {createRenewalUI,formatExpiry,localExpiry} from "/assets/renewals-db1c1f262c23.js";
 export function initAdmin(hooks){

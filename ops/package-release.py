@@ -11,7 +11,7 @@ parser.add_argument("--agent-amd64",type=pathlib.Path,required=True)
 parser.add_argument("--agent-arm64",type=pathlib.Path,required=True)
 args=parser.parse_args()
 root=pathlib.Path(__file__).resolve().parent.parent
-version="0.6.0"
+version="0.6.1"
 out=args.output.resolve()
 if out==root or root in out.parents: raise SystemExit("Release output must be outside the source tree")
 keypath=args.signing_key.resolve()
