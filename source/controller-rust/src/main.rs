@@ -8,6 +8,7 @@ mod http;
 mod migration;
 mod model;
 mod nodes;
+mod offsite;
 mod operations;
 mod realtime;
 mod ssh;

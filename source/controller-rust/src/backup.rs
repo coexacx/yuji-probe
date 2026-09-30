@@ -169,6 +169,8 @@ fn unpack(value: Value, passphrase: &str) -> ApiResult<Bundle> {
             || !acceptable_ip(&n.ip)
             || !username(&n.username)
             || !(1..=65535).contains(&n.port)
+            || n.public.group.chars().count() > 40
+            || n.notes.chars().count() > 2000
     }) {
         return Err(error("节点配置不正确"));
     }
@@ -184,6 +186,7 @@ fn unpack(value: Value, passphrase: &str) -> ApiResult<Bundle> {
             .any(|r| r.len() != 64 || !r.bytes().all(|c| c.is_ascii_hexdigit()))
         || b.operations.transfers.len() > 200
         || b.operations.retired.len() > 200
+        || !crate::offsite::validate_restore(&b.operations.offsite)
     {
         return Err(error("备份身份或状态不完整"));
     }
@@ -384,6 +387,12 @@ fn restore(app: &App, i: &mut Inner, mut b: Bundle) -> ApiResult<bool> {
         "backup:passphrase",
         &mut b.operations.schedule.sealed_password,
     )?;
+    rewrap(
+        app,
+        &master,
+        "backup:offsite-secret",
+        &mut b.operations.offsite.secret,
+    )?;
     for (id, s) in &mut b.data.secrets {
         secret_rewrap(app, &master, id, s)?;
     }
@@ -530,19 +539,32 @@ fn valid_backup(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
 }
 pub async fn scheduled(app: &App) {
+    let _ = start_scheduled(app, false);
+}
+pub fn start_scheduled(app: &App, force: bool) -> ApiResult<()> {
     let work = {
         let mut i = app.lock();
         let s = &i.ops.schedule;
-        if s.every_hours == 0
-            || s.sealed_password.is_empty()
-            || now() - s.last < i64::from(s.every_hours) * 3600
-            || i.ops.busy
-        {
-            return;
+        if i.ops.busy {
+            return if force {
+                Err(ApiError::new(409, "备份任务正在进行"))
+            } else {
+                Ok(())
+            };
         }
-        let Ok(pass) = app.unseal("backup:passphrase", &s.sealed_password) else {
-            return;
-        };
+        if s.sealed_password.is_empty() {
+            return if force {
+                Err(error("请先设置自动备份口令"))
+            } else {
+                Ok(())
+            };
+        }
+        if !force && (s.every_hours == 0 || now() - s.last < i64::from(s.every_hours) * 3600) {
+            return Ok(());
+        }
+        let pass = app
+            .unseal("backup:passphrase", &s.sealed_password)
+            .map_err(|_| error("备份口令无法解密"))?;
         let keep = s.keep.clamp(1, 30);
         let b = snapshot(app, &i);
         i.ops.busy = true;
@@ -560,11 +582,8 @@ pub async fn scheduled(app: &App) {
         let result = result.and_then(|value| {
             let dir = app.0.dir.join("backups");
             std::fs::create_dir_all(&dir).map_err(|_| ApiError::internal())?;
-            atomic_json(
-                &dir.join(format!("yuji-{}-{}.backup", now(), &token()[..8])),
-                &value,
-            )
-            .map_err(|_| ApiError::internal())?;
+            let name = format!("yuji-{}-{}.backup", now(), &token()[..8]);
+            atomic_json(&dir.join(&name), &value).map_err(|_| ApiError::internal())?;
             let mut entries = std::fs::read_dir(&dir)
                 .map_err(|_| ApiError::internal())?
                 .flatten()
@@ -576,14 +595,21 @@ pub async fn scheduled(app: &App) {
             for path in entries.into_iter().take(remove) {
                 let _ = std::fs::remove_file(path);
             }
-            Ok(())
+            Ok(name)
         });
         let mut i = app.lock();
         i.ops.busy = false;
         i.ops.schedule.last = now();
-        i.ops.schedule.error = result.err().map(|e| e.message).unwrap_or_default();
+        match result {
+            Ok(name) => {
+                i.ops.schedule.error.clear();
+                crate::offsite::enqueue(&mut i, &name);
+            }
+            Err(e) => i.ops.schedule.error = e.message,
+        }
         let _ = operations::save(&app, &i);
     });
+    Ok(())
 }
 pub fn valid_version(s: &str) -> bool {
     let pieces: Vec<_> = s.split('.').collect();

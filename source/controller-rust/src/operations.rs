@@ -15,6 +15,7 @@ pub struct BackupSchedule {
 #[serde(default)]
 pub struct State {
     pub schedule: BackupSchedule,
+    pub offsite: crate::offsite::State,
     pub transfers: HashMap<String, crate::migration::Transfer>,
     pub retired: HashMap<String, NodeSecret>,
     pub removal_names: HashMap<String, String>,
@@ -59,6 +60,9 @@ pub async fn api(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
     }
     if c.path.starts_with("/api/admin/ops/backup") || c.path == "/api/admin/ops/restore" {
         return crate::backup::api(app, c, body).await;
+    }
+    if c.path.starts_with("/api/admin/ops/offsite") {
+        return crate::offsite::api(app, c, body).await;
     }
     if matches!(
         c.path.as_str(),
@@ -167,6 +171,7 @@ pub fn start(app: &App) {
             tokio::select! {_=app.0.stop.cancelled()=>break,_=timer.tick()=>{}}
             app.lock().expire_nodes();
             crate::backup::scheduled(&app).await;
+            crate::offsite::tick(&app).await;
             crate::migration::tick(&app).await;
         }
     });

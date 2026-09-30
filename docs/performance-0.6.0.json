@@ -1,0 +1,128 @@
+{
+  "agentFailures": 0,
+  "allLatencyMS": {
+    "max": 501.522531,
+    "p50": 254.992411,
+    "p95": 370.997961,
+    "p99": 483.713385
+  },
+  "allRPS": 753.631264475043,
+  "averageResponseBytes": 164228.70562770564,
+  "clients": 200,
+  "errors": 0,
+  "errorsByType": {},
+  "finalDrainSeconds": 0.278222997,
+  "finalLagSamples": 0,
+  "finalLatestMatched": 200,
+  "finalOnline": 200,
+  "maxAgentSendMS": 16.82431,
+  "maxInFlight": 200,
+  "maxSamplesPerAgent": 32,
+  "measurementEnd": "2026-09-30T23:54:51.775296232+08:00",
+  "measurementStart": "2026-09-30T23:54:31.54524379+08:00",
+  "metricsDuringLoad": 4000,
+  "metricsTotal": 6400,
+  "minSamplesPerAgent": 32,
+  "nodes": 200,
+  "observations": [
+    {
+      "maxLagSamples": 1,
+      "online": 200,
+      "requestMS": 243.818623,
+      "seconds": 5.244099894
+    },
+    {
+      "maxLagSamples": 1,
+      "online": 200,
+      "requestMS": 291.997651,
+      "seconds": 10.293168999
+    },
+    {
+      "maxLagSamples": 1,
+      "online": 200,
+      "requestMS": 237.965364,
+      "seconds": 15.23841824
+    },
+    {
+      "maxLagSamples": 1,
+      "online": 200,
+      "requestMS": 233.574181,
+      "seconds": 20.233735187
+    }
+  ],
+  "ok": true,
+  "requestedSeconds": 20,
+  "requests": 15246,
+  "responseBytes": 2503830846,
+  "secondsIncludingDrain": 20.230052439,
+  "statuses": {
+    "200": 15246
+  },
+  "success": 15246,
+  "successLatencyMS": {
+    "max": 501.522531,
+    "p50": 254.992411,
+    "p95": 370.997961,
+    "p99": 483.713385
+  },
+  "successRPS": 753.631264475043,
+  "target": "https://127.0.0.1:19843",
+  "runtime": "rust060",
+  "label": "rust-060-regression",
+  "resources": {
+    "controller": {
+      "sampledSeconds": 19.541700839996338,
+      "cpuPercentOneCore": 48.744482775542195,
+      "cpuSeconds": 9.525501,
+      "rssMeanMiB": 18.22142269736842,
+      "rssPeakMiB": 18.3203125,
+      "pssMeanMiB": 15.685649671052632,
+      "pssPeakMiB": 15.78515625,
+      "peakCgroupMiB": 13.88671875,
+      "throttledSeconds": 0.0,
+      "maxThreads": 6,
+      "oomKills": 0
+    },
+    "php": {
+      "sampledSeconds": 19.541700839996338,
+      "cpuPercentOneCore": 95.95339296987986,
+      "cpuSeconds": 18.750925,
+      "rssMeanMiB": 207.02950246710526,
+      "rssPeakMiB": 207.08984375,
+      "pssMeanMiB": 27.94199732730263,
+      "pssPeakMiB": 27.95703125,
+      "peakCgroupMiB": 27.48046875,
+      "throttledSeconds": 9.433178,
+      "maxThreads": 9,
+      "oomKills": 0
+    },
+    "nginx": {
+      "sampledSeconds": 19.541700839996338,
+      "cpuPercentOneCore": 48.70061248978666,
+      "cpuSeconds": 9.516928,
+      "rssMeanMiB": 39.942228618421055,
+      "rssPeakMiB": 39.94921875,
+      "pssMeanMiB": 24.459292763157894,
+      "pssPeakMiB": 24.470703125,
+      "peakCgroupMiB": 30.3203125,
+      "throttledSeconds": 4.86432,
+      "maxThreads": 2,
+      "oomKills": 0
+    },
+    "load": {
+      "sampledSeconds": 19.541700839996338,
+      "cpuPercentOneCore": 44.3434226680221,
+      "cpuSeconds": 8.665459,
+      "rssMeanMiB": 56.190583881578945,
+      "rssPeakMiB": 59.296875,
+      "pssMeanMiB": 54.73512027138158,
+      "pssPeakMiB": 57.841796875,
+      "peakCgroupMiB": 60.875,
+      "throttledSeconds": 0.0,
+      "maxThreads": 7,
+      "oomKills": 0
+    }
+  },
+  "binarySHA256": "679e11778be7f38dad20d2959fb4d464337585f6c5acc4dd4f8bfe7ddb766aa9",
+  "binaryBytes": 8162560
+}

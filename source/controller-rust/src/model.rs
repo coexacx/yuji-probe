@@ -33,6 +33,9 @@ pub struct Disk {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PublicNode {
+    pub group: String,
+    pub pinned: bool,
+    pub order: u32,
     #[serde(rename = "networkAvailable")]
     pub network_available: bool,
     #[serde(rename = "network", deserialize_with = "null_default")]
@@ -80,6 +83,7 @@ pub struct PublicNode {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Node {
+    pub notes: String,
     pub removing: bool,
     #[serde(rename = "providerName")]
     pub provider_name: String,

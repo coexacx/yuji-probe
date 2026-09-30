@@ -6,6 +6,9 @@ use std::net::IpAddr;
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 struct NodeInput {
+    group: Option<String>,
+    pinned: Option<bool>,
+    notes: Option<String>,
     provider_name: Option<String>,
     #[serde(rename = "providerURL")]
     provider_url: Option<String>,
@@ -223,6 +226,38 @@ pub fn save_node(
         ));
     }
     lease(&mut n, &v, !id.is_empty())?;
+    if let Some(group) = &v.group {
+        let group = group.trim();
+        if !group.is_empty() && !valid_text(group, 40) {
+            return Err(ApiError::new(400, "分组最多 40 个字符"));
+        }
+        n.public.group = group.into();
+    }
+    if let Some(pinned) = v.pinned {
+        n.public.pinned = pinned;
+    }
+    if let Some(notes) = &v.notes {
+        if notes.chars().count() > 2000
+            || notes
+                .chars()
+                .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+        {
+            return Err(ApiError::new(
+                400,
+                "备注最多 2000 个字符，不能包含特殊控制字符",
+            ));
+        }
+        n.notes = notes.trim().into();
+    }
+    if id.is_empty() {
+        n.public.order = i
+            .data
+            .nodes
+            .iter()
+            .map(|n| n.public.order)
+            .max()
+            .map_or(0, |n| n.saturating_add(1));
+    }
     if v.code != "OTHER" {
         v.code = country_code(&v.code);
         v.country = country_name(&v.code);
@@ -470,4 +505,32 @@ mod contract_tests {
         assert_eq!(node.provider_url.as_deref(), Some("https://example.com"));
         assert_eq!(node.notify_renewal, Some(true));
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OrderInput {
+    ids: Vec<String>,
+}
+pub fn reorder(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
+    app.guard(i, c, true, true)?;
+    let value: OrderInput = decode(body)?;
+    let expected: std::collections::HashSet<_> =
+        i.data.nodes.iter().map(|n| n.public.id.as_str()).collect();
+    let received: std::collections::HashSet<_> = value.ids.iter().map(String::as_str).collect();
+    if value.ids.len() != expected.len() || received != expected {
+        return Err(ApiError::new(409, "服务器列表已变化，请刷新后重新排序"));
+    }
+    let mut data = i.data.clone();
+    for (order, id) in value.ids.iter().enumerate() {
+        data.nodes
+            .iter_mut()
+            .find(|n| &n.public.id == id)
+            .unwrap()
+            .public
+            .order = order as u32;
+    }
+    app.save_data(i, data)?;
+    app.record(i, "nodes_reordered", "更新服务器显示顺序");
+    Ok(ApiReply::ok(json!({"ok":true})))
 }

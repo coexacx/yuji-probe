@@ -28,6 +28,7 @@ struct Authorize {
     #[serde(rename = "type")]
     kind: String,
     ticket: String,
+    mode: String,
     cols: i64,
     rows: i64,
 }
@@ -116,7 +117,11 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         }
         _ => None,
     };
-    let Some(first) = first.filter(|v| v.kind == "authorize" && v.ticket.len() == 64) else {
+    let Some(first) = first.filter(|v| {
+        v.kind == "authorize"
+            && v.ticket.len() == 64
+            && ["", "terminal", "inspect"].contains(&v.mode.as_str())
+    }) else {
         return;
     };
     let authorized = (|| -> ApiResult<_> {
@@ -230,7 +235,10 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         }
         Ok(channel)
     };
-    let channel = {
+    let inspect_only = first.mode == "inspect";
+    let channel = if inspect_only {
+        None
+    } else {
         match timeout(Duration::from_secs(12), terminal).await {
             Ok(Ok(v)) => Some(v),
             _ => {
@@ -272,7 +280,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     tasks.spawn(async move{loop{tokio::select!{_=cancel.cancelled()=>break,m=send_queue.recv()=>{let Some(m)=m else{break};if !matches!(timeout(Duration::from_secs(5),ws_write.send(m)).await,Ok(Ok(()))){break}}}}cancel.cancel();});
     let _ = out
         .send(WS::Text(
-            json!({"type":"ready","files":true,"terminal":true})
+            json!({"type":"ready","files":!inspect_only,"terminal":!inspect_only,"inspection":true})
                 .to_string()
                 .into(),
         ))
@@ -288,7 +296,23 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     let file_check = check.clone();
     let file_out = out.clone();
     let file_stop = stop.clone();
-    tasks.spawn(async move{loop{tokio::select!{_=file_stop.cancelled()=>break,r=file_rx.recv()=>{let Some(r)=r else{break};if !file_check(){break}let value=file_service.process(&r).await;if file_check(){files::respond(&file_out,&r,value).await;}}}}});
+    let mut file_task = tokio::spawn(async move {
+        let mut clock = tokio::time::interval(Duration::from_secs(15));
+        loop {
+            tokio::select! {
+                biased;
+                _ = file_stop.cancelled() => break,
+                _ = clock.tick() => file_service.expire().await,
+                r = file_rx.recv() => {
+                    let Some(r) = r else { break };
+                    if !file_check() { break; }
+                    let value = tokio::select! { biased; _ = file_stop.cancelled() => break, v = file_service.process(&r) => v };
+                    if file_check() { files::respond(&file_out, &r, value).await; }
+                }
+            }
+        }
+        file_service.cleanup().await;
+    });
     let read_stop = stop.clone();
     let read_app = app.clone();
     let read_activity = activity.clone();
@@ -369,7 +393,21 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                             file_window = Instant::now();
                             file_count = 0;
                         }
-                        file_count += 1;
+                        if !files::is_chunk(&r) {
+                            file_count += 1;
+                        }
+                        if inspect_only && !files::is_inspection(&r) {
+                            files::respond(
+                                &read_out,
+                                &r,
+                                Err(files::Problem {
+                                    code: "permission",
+                                    message: "此连接仅用于查看运行状态".into(),
+                                }),
+                            )
+                            .await;
+                            continue;
+                        }
                         if file_count > 90 {
                             files::respond(
                                 &read_out,
@@ -524,6 +562,12 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     tasks.spawn(async move{let started=Instant::now();let mut next_ping=Instant::now()+Duration::from_secs(25);let mut timer=tokio::time::interval(Duration::from_secs(1));loop{tokio::select!{_=watch_stop.cancelled()=>break,_=timer.tick()=>{let idle=activity.lock().unwrap().elapsed()>Duration::from_secs(600);let overdue=probe.lock().unwrap().as_ref().is_some_and(|(_,at)|at.elapsed()>Duration::from_secs(5));if idle||overdue||started.elapsed()>Duration::from_secs(3600)||!check(){notice(&watch_out,"error","终端已超时或管理授权失效").await;break}
 if Instant::now()>=next_ping{let value=token().as_bytes()[..32].to_vec();*probe.lock().unwrap()=Some((value.clone(),Instant::now()));if !matches!(timeout(Duration::from_secs(5),watch_out.send(WS::Ping(value.into()))).await,Ok(Ok(()))){break}next_ping=Instant::now()+Duration::from_secs(25);}}}}watch_stop.cancel();});
     stop.cancelled().await;
+    if timeout(Duration::from_secs(5), &mut file_task)
+        .await
+        .is_err()
+    {
+        file_task.abort();
+    }
     if let Some(shell) = shell_write {
         let _ = timeout(Duration::from_secs(1), shell.close()).await;
     }

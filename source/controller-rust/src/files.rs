@@ -1,3 +1,5 @@
+mod inspector;
+mod transfer;
 use crate::{core::*, ssh};
 use axum::extract::ws::Message as WS;
 use russh_sftp::{
@@ -32,6 +34,9 @@ pub struct Request {
     pub revision: String,
     pub content: String,
     pub offset: i64,
+    pub target: String,
+    pub transfer: String,
+    pub size: u64,
 }
 #[derive(Clone)]
 struct Snapshot {
@@ -91,10 +96,20 @@ pub fn parse(raw: &[u8]) -> Option<Request> {
     Some(r)
 }
 pub fn validate(r: &Request) -> Result<(), Problem> {
-    if r.content.len() > MAX_EDIT || r.offset < 0 || r.offset > 10000 {
+    if r.content.len() > MAX_EDIT
+        || r.offset < 0
+        || r.offset > transfer::MAX_TRANSFER as i64
+        || r.size > transfer::MAX_TRANSFER
+        || r.transfer.len() > 64
+        || r.target.len() > 4096
+    {
         return Err(error("limit", "在线编辑最多支持 256 KiB 文本"));
     }
-    if !valid_path(&r.path) || !["list", "read", "save", "home"].contains(&r.action.as_str()) {
+    if !valid_path(&r.path)
+        || (!["list", "read", "save", "home"].contains(&r.action.as_str())
+            && !transfer::action(&r.action)
+            && !inspector::action(&r.action))
+    {
         return Err(error("invalid", "文件路径或操作不正确"));
     }
     Ok(())
@@ -163,6 +178,9 @@ struct Sftp {
 }
 impl Sftp {
     async fn open(client: &ssh::Client) -> Result<Self, Problem> {
+        Self::open_limit(client, 16 * 1024 * 1024).await
+    }
+    async fn open_limit(client: &ssh::Client, limit: usize) -> Result<Self, Problem> {
         let channel = client
             .channel_open_session()
             .await
@@ -174,7 +192,7 @@ impl Sftp {
         let raw = Arc::new(RawSftpSession::new_with_config(
             Limited {
                 inner: channel.into_stream(),
-                left: 16 * 1024 * 1024,
+                left: limit,
             },
             Config {
                 max_packet_len: 256 * 1024,
@@ -358,6 +376,8 @@ fn mode_text(a: &FileAttributes) -> String {
 }
 pub type Authorize = Arc<dyn Fn() -> bool + Send + Sync>;
 pub struct Files {
+    transfer: Option<transfer::Transfer>,
+    inspector: inspector::Inspector,
     app: App,
     client: Arc<ssh::Client>,
     node: String,
@@ -384,6 +404,8 @@ impl Files {
         authorized: Authorize,
     ) -> Self {
         Self {
+            transfer: None,
+            inspector: inspector::Inspector::default(),
             app,
             client,
             node,
@@ -426,7 +448,19 @@ impl Files {
             }
         }
     }
+    pub async fn cleanup(&mut self) {
+        transfer::cleanup(self).await;
+    }
+    pub async fn expire(&mut self) {
+        transfer::expire(self).await;
+    }
     async fn handle(&mut self, r: &Request) -> Result<Value, Problem> {
+        if inspector::action(&r.action) {
+            return self.inspector.handle(&self.client, r).await;
+        }
+        if transfer::action(&r.action) {
+            return transfer::handle(self, r).await;
+        }
         let c = Sftp::open(&self.client).await?;
         let canonical = c
             .real(if r.action == "home" { "." } else { &r.path })
@@ -734,6 +768,14 @@ impl Files {
         Ok(Self::view(&r.path, path, &updated, &content, &s, ""))
     }
 }
+
+pub fn is_chunk(r: &Request) -> bool {
+    transfer::chunk(&r.action)
+}
+pub fn is_inspection(r: &Request) -> bool {
+    inspector::action(&r.action)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

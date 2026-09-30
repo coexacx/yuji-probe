@@ -1,6 +1,6 @@
 # 安全说明
 
-0.4.1 是本仓库维护的 GitHub 发行版。已知上游 RSA 告警、当前调用路径和限制见 [Rust 安全说明](docs/RUST-SECURITY.md)。本项目不作“没有任何漏洞”的承诺。
+0.6.0 是本仓库维护的 GitHub 发行版。已知上游 RSA 告警、当前调用路径和限制见 [Rust 安全说明](docs/RUST-SECURITY.md)。本项目不作“没有任何漏洞”的承诺。
 
 如果发现可导致未授权访问、凭据泄露、主控或节点命令执行的问题，请优先通过 [GitHub 私密漏洞报告](https://github.com/coexacx/yuji-probe/security/advisories/new) 联系维护者。不要在公开 Issue 中贴出真实服务器地址、管理员密码、节点 Token、私钥或运行状态文件。
 

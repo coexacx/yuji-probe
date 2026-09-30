@@ -485,7 +485,7 @@ impl App {
             login_slots: Arc::new(Semaphore::new(2)),
             deploy_slots: Arc::new(Semaphore::new(2)),
             pending_terminals: Arc::new(Semaphore::new(8)),
-            terminal_slots: Arc::new(Semaphore::new(4)),
+            terminal_slots: Arc::new(Semaphore::new(8)),
             stop: CancellationToken::new(),
             http,
         }));

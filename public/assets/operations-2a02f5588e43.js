@@ -1,3 +1,4 @@
+import {renderOffsite} from "/assets/offsite-a40ce560bd22.js";
 
 export function createOperations({el,api,toast,field,button,heading,getRecords,getAuth,refresh}){
  const apiRoot='/api/admin/ops/';
@@ -57,6 +58,7 @@ export function createOperations({el,api,toast,field,button,heading,getRecords,g
    status.textContent='最近备份：'+date(saved.last)+(saved.error?' · '+saved.error:'');
    for(const file of saved.files.sort((a,b)=>b.name.localeCompare(a.name))){const row=el('div','ops-session');row.append(el('span','',file.name+' · '+bytes(file.size)),action('下载',async()=>{const r=await api(apiRoot+'backup/download','POST',{name:file.name});saveFile(r.name,r.backup);}));scheduled.append(row);}
   }catch(e){status.textContent=e.message;}
+  await renderOffsite(panel,{el,api,toast,field,section,select,action,saveFile,bytes,date});
   const restore=section(panel,'恢复与迁移','保留当前站点域名。域名变化时，新主控会通过专用 SSH 恢复密钥修正 Agent 地址，并轮换节点凭据。');
   const rf=el('form','settings-form'),[upload,u]=field('选择加密备份','file','restoreFile','');u.accept='.backup,application/json';u.required=true;
   const [pw,pwi]=field('备份口令','password','restorePassphrase','');pwi.required=true;pwi.autocomplete='off';

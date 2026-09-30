@@ -176,6 +176,9 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
             Ok(ApiReply::ok(json!({"ok":true})))
         }
         _ => {
+            if p == "/api/admin/node-order" && c.method == "POST" {
+                return nodes::reorder(app, &mut i, c, body);
+            }
             if p == "/api/admin/telegram"
                 || p == "/api/admin/telegram/test"
                 || p == "/api/admin/telegram/preview"

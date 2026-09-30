@@ -1,6 +1,6 @@
-import {createFileBrowser} from './files.mjs';
-import {Terminal} from './xterm.mjs';
-import {FitAddon} from './addon-fit.mjs';
+import {createFileBrowser} from "/assets/files-f2775b0ab527.js";
+import {Terminal} from "/assets/xterm-b336ec65a086.js";
+import {FitAddon} from "/assets/fit-2d87e1bddc73.js";
 function createSession(api,root,dialog,onClose){
  const $=s=>root.querySelector(s),mount=$('#terminal-mount'),placeholder=$('.terminal-placeholder'),connect=$('#terminal-connect'),disconnect=$('#terminal-disconnect');
  let socket=null,term=null,fit=null,resize=null,current=null,generation=0,connected=false,commands=[];
