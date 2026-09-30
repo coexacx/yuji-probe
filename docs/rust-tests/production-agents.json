@@ -1,0 +1,32 @@
+{
+  "ok": true,
+  "results": [
+    {
+      "id": "production-node-1",
+      "ok": true,
+      "agentVersion": "0.1.3-rust.1",
+      "networkInterfaces": 1,
+      "authenticatedSSHVerified": true,
+      "configurationPreserved": true,
+      "rollbackBackup": true
+    },
+    {
+      "id": "production-node-2",
+      "ok": true,
+      "agentVersion": "0.1.3-rust.1",
+      "networkInterfaces": 1,
+      "authenticatedSSHVerified": true,
+      "configurationPreserved": true,
+      "rollbackBackup": true
+    },
+    {
+      "id": "production-node-3",
+      "ok": true,
+      "agentVersion": "0.1.3-rust.1",
+      "networkInterfaces": 2,
+      "authenticatedSSHVerified": true,
+      "configurationPreserved": true,
+      "rollbackBackup": true
+    }
+  ]
+}

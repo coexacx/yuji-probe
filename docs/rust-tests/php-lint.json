@@ -1,0 +1,25 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "file": "app/install.php",
+      "ok": true
+    },
+    {
+      "file": "app/bootstrap.php",
+      "ok": true
+    },
+    {
+      "file": "app/gateway.php",
+      "ok": true
+    },
+    {
+      "file": "app/setup-view.php",
+      "ok": true
+    },
+    {
+      "file": "public/index.php",
+      "ok": true
+    }
+  ]
+}

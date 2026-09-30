@@ -1,0 +1,112 @@
+{
+  "agentVersion": "0.1.2-test",
+  "connections": 4,
+  "latencyPongs": 74,
+  "loopbackOnly": true,
+  "maxMetricGapSeconds": 8.068693597,
+  "metricMessages": 74,
+  "ok": true,
+  "protocol": "original Go wire.Peer and wire.Tunnel",
+  "protocolErrors": 0,
+  "reconnectSeconds": [
+    1.707138998,
+    2.158132893,
+    4.113696115
+  ],
+  "thirdTunnelRejected": true,
+  "transfer": {
+    "channels": 2,
+    "errors": 0,
+    "intervalMS": 100,
+    "payloadBytes": 32768,
+    "roundTripBytes": 78643200,
+    "seconds": 120.002881787,
+    "operations": 2400,
+    "p50MS": 2.027,
+    "p95MS": 3.73,
+    "p99MS": 5.479,
+    "perDirectionMiBps": 0.6249849910531465
+  },
+  "variant": "go",
+  "binaryBytes": 7028896,
+  "binarySHA256": "356a18847ea2e18f6443073d89ccb2c38c43557531159c51515e14a4f3ceec35",
+  "resources": {
+    "idle": {
+      "samples": 60,
+      "seconds": 59.0519,
+      "rssMeanKiB": 11913.4,
+      "rssPeakKiB": 12300,
+      "rssFirstKiB": 11880,
+      "rssLastKiB": 11904,
+      "pssMeanKiB": 10177.6,
+      "cpuSeconds": 0.027758,
+      "cpuPercentOneCore": 0.047,
+      "fdsMin": 7,
+      "fdsMax": 7,
+      "threadsMax": 7,
+      "throttledSeconds": 0.0
+    },
+    "transfer": {
+      "samples": 120,
+      "seconds": 119.1163,
+      "rssMeanKiB": 12875.47,
+      "rssPeakKiB": 13376,
+      "rssFirstKiB": 12296,
+      "rssLastKiB": 12716,
+      "pssMeanKiB": 11266.75,
+      "cpuSeconds": 2.391021,
+      "cpuPercentOneCore": 2.0073,
+      "fdsMin": 9,
+      "fdsMax": 9,
+      "threadsMax": 8,
+      "throttledSeconds": 0.0
+    },
+    "reconnect": {
+      "samples": 21,
+      "seconds": 20.017600000000016,
+      "rssMeanKiB": 12716,
+      "rssPeakKiB": 12716,
+      "rssFirstKiB": 12716,
+      "rssLastKiB": 12716,
+      "pssMeanKiB": 11327.81,
+      "cpuSeconds": 0.011004,
+      "cpuPercentOneCore": 0.055,
+      "fdsMin": 6,
+      "fdsMax": 7,
+      "threadsMax": 8,
+      "throttledSeconds": 0.0
+    },
+    "post-idle": {
+      "samples": 30,
+      "seconds": 29.02680000000001,
+      "rssMeanKiB": 12716,
+      "rssPeakKiB": 12716,
+      "rssFirstKiB": 12716,
+      "rssLastKiB": 12716,
+      "pssMeanKiB": 11328,
+      "cpuSeconds": 0.009234,
+      "cpuPercentOneCore": 0.0318,
+      "fdsMin": 7,
+      "fdsMax": 7,
+      "threadsMax": 8,
+      "throttledSeconds": 0.0
+    }
+  },
+  "elapsedSeconds": 236.9023716149968,
+  "sameAgentProcessThroughout": true,
+  "settings": {
+    "CPUQuota": "10%",
+    "MemoryMax": "96M",
+    "TasksMax": 32,
+    "LimitNOFILE": 128,
+    "GOMAXPROCS": "1",
+    "GOMEMLIMIT": "64MiB",
+    "network": "loopback TLS, same original Go protocol peer, 2 TCP echo tunnels"
+  },
+  "hostSummary": {
+    "cpu_model": "Intel(R) Xeon(R) Platinum",
+    "cores": 2,
+    "arch": "amd64",
+    "system": "Debian GNU/Linux 12 (bookworm)"
+  }
+}

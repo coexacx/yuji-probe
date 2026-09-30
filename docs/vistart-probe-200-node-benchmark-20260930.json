@@ -1,0 +1,786 @@
+{
+  "verifiedAt": "2026-09-30T07:26:46+08:00",
+  "conclusion": "Rust uses less controller memory, but the current Go controller has substantially higher throughput and lower latency in this 200-node / 200-client workload.",
+  "methodology": {
+    "createdAt": "2026-09-29T23:21:30.540401+00:00",
+    "host": {
+      "logicalCPU": 4,
+      "cpuModel": "Intel Xeon E7-4830 v3 2.10 GHz (virtual CPU)",
+      "memoryMiB": 15999
+    },
+    "versions": {
+      "rustController": "0.4.0-rust.1",
+      "goController": "Go binary used immediately before test-controller migration",
+      "goToolchain": "1.27.1",
+      "php": "8.4",
+      "protocol": "identical existing Go wire simulator for both controllers"
+    },
+    "load": {
+      "nodes": 200,
+      "reportIntervalSeconds": 1,
+      "reportsAligned": true,
+      "distinctNodeIdentities": true,
+      "clients": 200,
+      "clientModel": "closed-loop, one outstanding HTTPS request per client, no pacing delay",
+      "endpoint": "/api/public/nodes",
+      "response": "complete 200-node live public board",
+      "tlsValidation": true,
+      "httpVersion": "1.1",
+      "requestTimeoutSeconds": 20,
+      "warmupSeconds": 10,
+      "measurementSecondsPerRound": 45,
+      "order": [
+        "go-1",
+        "rust-1",
+        "rust-2",
+        "go-2"
+      ],
+      "rateLimits": "unchanged; each client and node uses a distinct loopback source IP",
+      "measurementDuration": "includes completing requests launched before the 45-second deadline"
+    },
+    "limits": {
+      "wholeBenchmarkCPUPercent": 275,
+      "benchmarkCPUs": [
+        1,
+        2,
+        3
+      ],
+      "wholeBenchmarkMemoryMiB": 2560,
+      "controllerCPUPercent": 100,
+      "controllerMemoryMiB": 512,
+      "phpCPUPercent": 100,
+      "phpMemoryMiB": 768,
+      "phpWorkers": 8,
+      "nginxCPUPercent": 50,
+      "loadGeneratorCPUPercent": 100,
+      "controllerRuntime": "actual production -daemon launcher and supervisor; includes supervisor and worker",
+      "GOMAXPROCS": 2,
+      "GOMEMLIMIT": "192MiB"
+    },
+    "binaries": {
+      "go": {
+        "sha256": "f9aa108bcaaf795fa146187a5164fc1b10713b7fae007d68dd61a5385b1cb511",
+        "bytes": 9191584
+      },
+      "rust": {
+        "sha256": "fab386fb0a063e2d5b7291dd2791155a05194d8c3f0c66c3e0a089b8d4f07f06",
+        "bytes": 5688512
+      }
+    },
+    "isolation": "separate loopback-only Nginx/PHP/controller/state, no production traffic or credentials"
+  },
+  "combined": {
+    "go": {
+      "requests": 29718,
+      "errors": 0,
+      "rateLimitResponses": 0,
+      "measuredSecondsIncludingInFlightCompletion": 91.371122817,
+      "successRPS": 325.2449907999909,
+      "p50MS": 607.598444,
+      "p95MS": 663.199494,
+      "p99MS": 779.379623,
+      "maxMS": 848.887736,
+      "controllerRSSMeanMiB": 39.33356606739958,
+      "controllerRSSPeakMiB": 41.0234375,
+      "controllerPSSMeanMiB": 32.81382110536604,
+      "controllerCPUPercentOneCore": 98.13376181607183,
+      "phpCPUPercentOneCore": 38.20540900434149,
+      "nginxCPUPercentOneCore": 21.567496109559542,
+      "generatorCPUPercentOneCore": 20.236062605554803,
+      "agentFailures": 0,
+      "latestMetricMatchedEveryRound": 200,
+      "maximumObservedMetricLagSamples": 0,
+      "metricsDuringLoad": 18200,
+      "responseMeanKiB": 149.25777030650616
+    },
+    "rust": {
+      "requests": 7797,
+      "errors": 0,
+      "rateLimitResponses": 0,
+      "measuredSecondsIncludingInFlightCompletion": 95.04144423299999,
+      "successRPS": 82.03789476183854,
+      "p50MS": 2472.237759,
+      "p95MS": 2802.845153,
+      "p99MS": 2892.133966,
+      "maxMS": 2982.648773,
+      "controllerRSSMeanMiB": 18.150559442979038,
+      "controllerRSSPeakMiB": 20.3515625,
+      "controllerPSSMeanMiB": 15.670753991181293,
+      "controllerCPUPercentOneCore": 99.5773893632832,
+      "phpCPUPercentOneCore": 14.068635319554126,
+      "nginxCPUPercentOneCore": 10.886214172042271,
+      "generatorCPUPercentOneCore": 10.953803633638376,
+      "agentFailures": 0,
+      "latestMetricMatchedEveryRound": 200,
+      "maximumObservedMetricLagSamples": 0,
+      "metricsDuringLoad": 19000,
+      "responseMeanKiB": 153.41654905833173
+    }
+  },
+  "rustComparedWithGo": {
+    "throughputChangePercent": -74.77658470310227,
+    "rssChangePercent": -53.854782930494125,
+    "p95Ratio": 4.226247423825689
+  },
+  "runs": [
+    {
+      "agentFailures": 0,
+      "allLatencyMS": {
+        "max": 827.284574,
+        "p50": 609.075471,
+        "p95": 648.059039,
+        "p99": 727.414863
+      },
+      "allRPS": 325.8699951451867,
+      "averageResponseBytes": 152841.72138836773,
+      "clients": 200,
+      "errors": 0,
+      "errorsByType": {},
+      "finalDrainSeconds": 0.012619857,
+      "finalLagSamples": 0,
+      "finalLatestMatched": 200,
+      "finalOnline": 200,
+      "maxAgentSendMS": 30.848152,
+      "maxInFlight": 200,
+      "maxSamplesPerAgent": 57,
+      "measurementEnd": "2026-09-30T07:21:02.73469697+08:00",
+      "measurementStart": "2026-09-30T07:20:16.937292416+08:00",
+      "metricsDuringLoad": 9000,
+      "metricsTotal": 11400,
+      "minSamplesPerAgent": 57,
+      "nodes": 200,
+      "observations": [
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 598.649736,
+          "seconds": 5.5990462789999995
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 597.39962,
+          "seconds": 10.598245339
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 596.169407,
+          "seconds": 15.596741809
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 596.459119,
+          "seconds": 20.596766434
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 595.532642,
+          "seconds": 25.595605817
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 621.645295,
+          "seconds": 30.621918174
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 632.008264,
+          "seconds": 35.63212409
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 616.761308,
+          "seconds": 40.61684136
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 817.663808,
+          "seconds": 45.818149528
+        }
+      ],
+      "ok": true,
+      "requestedSeconds": 45,
+      "requests": 14924,
+      "responseBytes": 2281009850,
+      "secondsIncludingDrain": 45.797404555,
+      "statuses": {
+        "200": 14924
+      },
+      "success": 14924,
+      "successLatencyMS": {
+        "max": 827.284574,
+        "p50": 609.075471,
+        "p95": 648.059039,
+        "p99": 727.414863
+      },
+      "successRPS": 325.8699951451867,
+      "target": "https://127.0.0.1:19843",
+      "runtime": "go",
+      "label": "go-1",
+      "resources": {
+        "controller": {
+          "sampledSeconds": 45.67239046096802,
+          "cpuPercentOneCore": 98.51455670675303,
+          "cpuSeconds": 44.993953,
+          "rssMeanMiB": 39.007114955357146,
+          "rssPeakMiB": 40.1484375,
+          "pssMeanMiB": 32.48609561011905,
+          "pssPeakMiB": 33.62890625,
+          "peakCgroupMiB": 32.65625,
+          "throttledSeconds": 5.755631,
+          "maxThreads": 13,
+          "oomKills": 0
+        },
+        "php": {
+          "sampledSeconds": 45.67239046096802,
+          "cpuPercentOneCore": 38.69306778479807,
+          "cpuSeconds": 17.672049,
+          "rssMeanMiB": 207.35435267857142,
+          "rssPeakMiB": 207.45703125,
+          "pssMeanMiB": 28.821358816964285,
+          "pssPeakMiB": 28.912109375,
+          "peakCgroupMiB": 30.2578125,
+          "throttledSeconds": 0.0,
+          "maxThreads": 9,
+          "oomKills": 0
+        },
+        "nginx": {
+          "sampledSeconds": 45.67239046096802,
+          "cpuPercentOneCore": 21.725705398494465,
+          "cpuSeconds": 9.922649,
+          "rssMeanMiB": 39.86839657738095,
+          "rssPeakMiB": 39.890625,
+          "pssMeanMiB": 24.53799293154762,
+          "pssPeakMiB": 24.583984375,
+          "peakCgroupMiB": 28.85546875,
+          "throttledSeconds": 0.0,
+          "maxThreads": 2,
+          "oomKills": 0
+        },
+        "load": {
+          "sampledSeconds": 45.67239046096802,
+          "cpuPercentOneCore": 20.228571149337178,
+          "cpuSeconds": 9.238872,
+          "rssMeanMiB": 58.25609188988095,
+          "rssPeakMiB": 59.4296875,
+          "pssMeanMiB": 56.83208937872024,
+          "pssPeakMiB": 58.0068359375,
+          "peakCgroupMiB": 57.359375,
+          "throttledSeconds": 0.0,
+          "maxThreads": 7,
+          "oomKills": 0
+        }
+      },
+      "binarySHA256": "f9aa108bcaaf795fa146187a5164fc1b10713b7fae007d68dd61a5385b1cb511",
+      "binaryBytes": 9191584
+    },
+    {
+      "agentFailures": 0,
+      "allLatencyMS": {
+        "max": 2946.856913,
+        "p50": 2525.797827,
+        "p95": 2812.271608,
+        "p99": 2875.077749
+      },
+      "allRPS": 81.04348942046887,
+      "averageResponseBytes": 157100.8197614108,
+      "clients": 200,
+      "errors": 0,
+      "errorsByType": {},
+      "finalDrainSeconds": 0.033617655,
+      "finalLagSamples": 0,
+      "finalLatestMatched": 200,
+      "finalOnline": 200,
+      "maxAgentSendMS": 18.497838,
+      "maxInFlight": 200,
+      "maxSamplesPerAgent": 60,
+      "measurementEnd": "2026-09-30T07:22:09.772082849+08:00",
+      "measurementStart": "2026-09-30T07:21:22.192690271+08:00",
+      "metricsDuringLoad": 9400,
+      "metricsTotal": 12000,
+      "minSamplesPerAgent": 60,
+      "nodes": 200,
+      "observations": [
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2451.379886,
+          "seconds": 7.451897569
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2692.896024,
+          "seconds": 12.693295681
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2496.131041,
+          "seconds": 17.496804913
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2759.768295,
+          "seconds": 22.76021991
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2382.325161,
+          "seconds": 27.382898763
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2454.821991,
+          "seconds": 32.455873036
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2847.426678,
+          "seconds": 37.847792515
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 1791.387542,
+          "seconds": 41.791598657
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2591.283489,
+          "seconds": 47.592189036
+        }
+      ],
+      "ok": true,
+      "requestedSeconds": 45,
+      "requests": 3856,
+      "responseBytes": 605780761,
+      "secondsIncludingDrain": 47.57939259,
+      "statuses": {
+        "200": 3856
+      },
+      "success": 3856,
+      "successLatencyMS": {
+        "max": 2946.856913,
+        "p50": 2525.797827,
+        "p95": 2812.271608,
+        "p99": 2875.077749
+      },
+      "successRPS": 81.04348942046887,
+      "target": "https://127.0.0.1:19843",
+      "runtime": "rust",
+      "label": "rust-1",
+      "resources": {
+        "controller": {
+          "sampledSeconds": 46.75690174102783,
+          "cpuPercentOneCore": 99.83674978840428,
+          "cpuSeconds": 46.680571,
+          "rssMeanMiB": 17.239081325301203,
+          "rssPeakMiB": 18.28125,
+          "pssMeanMiB": 14.752353162650602,
+          "pssPeakMiB": 15.828125,
+          "peakCgroupMiB": 14.46484375,
+          "throttledSeconds": 30.765229,
+          "maxThreads": 6,
+          "oomKills": 0
+        },
+        "php": {
+          "sampledSeconds": 46.75690174102783,
+          "cpuPercentOneCore": 14.07972888465232,
+          "cpuSeconds": 6.583245,
+          "rssMeanMiB": 206.25889495481928,
+          "rssPeakMiB": 206.28515625,
+          "pssMeanMiB": 28.27719079442771,
+          "pssPeakMiB": 28.5244140625,
+          "peakCgroupMiB": 26.85546875,
+          "throttledSeconds": 0.0,
+          "maxThreads": 9,
+          "oomKills": 0
+        },
+        "nginx": {
+          "sampledSeconds": 46.75690174102783,
+          "cpuPercentOneCore": 10.64440716702328,
+          "cpuSeconds": 4.976995,
+          "rssMeanMiB": 39.822948042168676,
+          "rssPeakMiB": 39.828125,
+          "pssMeanMiB": 24.474056381777107,
+          "pssPeakMiB": 24.5263671875,
+          "peakCgroupMiB": 28.34765625,
+          "throttledSeconds": 0.0,
+          "maxThreads": 2,
+          "oomKills": 0
+        },
+        "load": {
+          "sampledSeconds": 46.75690174102783,
+          "cpuPercentOneCore": 10.938804346636264,
+          "cpuSeconds": 5.114646,
+          "rssMeanMiB": 58.11125753012048,
+          "rssPeakMiB": 59.46484375,
+          "pssMeanMiB": 56.62728256777108,
+          "pssPeakMiB": 57.9814453125,
+          "peakCgroupMiB": 57.1015625,
+          "throttledSeconds": 0.0,
+          "maxThreads": 7,
+          "oomKills": 0
+        }
+      },
+      "binarySHA256": "fab386fb0a063e2d5b7291dd2791155a05194d8c3f0c66c3e0a089b8d4f07f06",
+      "binaryBytes": 5688512
+    },
+    {
+      "agentFailures": 0,
+      "allLatencyMS": {
+        "max": 2982.648773,
+        "p50": 2416.465865,
+        "p95": 2776.784131,
+        "p99": 2913.71173
+      },
+      "allRPS": 83.03475858235983,
+      "averageResponseBytes": 157096.3217457498,
+      "clients": 200,
+      "errors": 0,
+      "errorsByType": {},
+      "finalDrainSeconds": 0.025357099,
+      "finalLagSamples": 0,
+      "finalLatestMatched": 200,
+      "finalOnline": 200,
+      "maxAgentSendMS": 44.915318,
+      "maxInFlight": 200,
+      "maxSamplesPerAgent": 60,
+      "measurementEnd": "2026-09-30T07:23:15.786155577+08:00",
+      "measurementStart": "2026-09-30T07:22:28.324103946+08:00",
+      "metricsDuringLoad": 9600,
+      "metricsTotal": 12000,
+      "minSamplesPerAgent": 60,
+      "nodes": 200,
+      "observations": [
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2397.844306,
+          "seconds": 7.398310277
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2494.915091,
+          "seconds": 12.495875909
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2366.384865,
+          "seconds": 17.367104336
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2268.619556,
+          "seconds": 22.269248043
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2483.110083,
+          "seconds": 27.483672865
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2559.291062,
+          "seconds": 32.55962025
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 1869.347369,
+          "seconds": 36.869556637
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2459.401184,
+          "seconds": 42.459696773
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 2466.333736,
+          "seconds": 47.467366494
+        }
+      ],
+      "ok": true,
+      "requestedSeconds": 45,
+      "requests": 3941,
+      "responseBytes": 619116604,
+      "secondsIncludingDrain": 47.462051643,
+      "statuses": {
+        "200": 3941
+      },
+      "success": 3941,
+      "successLatencyMS": {
+        "max": 2982.648773,
+        "p50": 2416.465865,
+        "p95": 2776.784131,
+        "p99": 2913.71173
+      },
+      "successRPS": 83.03475858235983,
+      "target": "https://127.0.0.1:19843",
+      "runtime": "rust",
+      "label": "rust-2",
+      "resources": {
+        "controller": {
+          "sampledSeconds": 46.79762363433838,
+          "cpuPercentOneCore": 99.31825462585182,
+          "cpuSeconds": 46.478583,
+          "rssMeanMiB": 19.061244419642858,
+          "rssPeakMiB": 20.3515625,
+          "pssMeanMiB": 16.588355654761905,
+          "pssPeakMiB": 17.890625,
+          "peakCgroupMiB": 16.4765625,
+          "throttledSeconds": 30.766944,
+          "maxThreads": 6,
+          "oomKills": 0
+        },
+        "php": {
+          "sampledSeconds": 46.79762363433838,
+          "cpuPercentOneCore": 14.057551407744699,
+          "cpuSeconds": 6.5786,
+          "rssMeanMiB": 207.25134858630952,
+          "rssPeakMiB": 207.33984375,
+          "pssMeanMiB": 28.417864118303573,
+          "pssPeakMiB": 28.609375,
+          "peakCgroupMiB": 26.89453125,
+          "throttledSeconds": 0.0,
+          "maxThreads": 9,
+          "oomKills": 0
+        },
+        "nginx": {
+          "sampledSeconds": 46.79762363433838,
+          "cpuPercentOneCore": 11.12781076383308,
+          "cpuSeconds": 5.207551,
+          "rssMeanMiB": 39.87788318452381,
+          "rssPeakMiB": 39.8828125,
+          "pssMeanMiB": 24.50927734375,
+          "pssPeakMiB": 24.5576171875,
+          "peakCgroupMiB": 28.59765625,
+          "throttledSeconds": 0.0,
+          "maxThreads": 2,
+          "oomKills": 0
+        },
+        "load": {
+          "sampledSeconds": 46.79762363433838,
+          "cpuPercentOneCore": 10.968789868709264,
+          "cpuSeconds": 5.133133,
+          "rssMeanMiB": 58.04092261904762,
+          "rssPeakMiB": 59.203125,
+          "pssMeanMiB": 56.618768601190474,
+          "pssPeakMiB": 57.7802734375,
+          "peakCgroupMiB": 56.2109375,
+          "throttledSeconds": 0.0,
+          "maxThreads": 7,
+          "oomKills": 0
+        }
+      },
+      "binarySHA256": "fab386fb0a063e2d5b7291dd2791155a05194d8c3f0c66c3e0a089b8d4f07f06",
+      "binaryBytes": 5688512
+    },
+    {
+      "agentFailures": 0,
+      "allLatencyMS": {
+        "max": 848.887736,
+        "p50": 606.016866,
+        "p95": 724.226972,
+        "p99": 793.726313
+      },
+      "allRPS": 324.61691878969293,
+      "averageResponseBytes": 152838.17669325403,
+      "clients": 200,
+      "errors": 0,
+      "errorsByType": {},
+      "finalDrainSeconds": 0.009774542,
+      "finalLagSamples": 0,
+      "finalLatestMatched": 200,
+      "finalOnline": 200,
+      "maxAgentSendMS": 23.07621,
+      "maxInFlight": 200,
+      "maxSamplesPerAgent": 58,
+      "measurementEnd": "2026-09-30T07:24:19.998109811+08:00",
+      "measurementStart": "2026-09-30T07:23:34.424391536+08:00",
+      "metricsDuringLoad": 9200,
+      "metricsTotal": 11600,
+      "minSamplesPerAgent": 58,
+      "nodes": 200,
+      "observations": [
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 625.225189,
+          "seconds": 5.625858049
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 626.800066,
+          "seconds": 10.628385083
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 625.794293,
+          "seconds": 15.627104121
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 634.546284,
+          "seconds": 20.6356553
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 610.881067,
+          "seconds": 25.611662957
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 781.656562,
+          "seconds": 30.782671596
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 628.567192,
+          "seconds": 35.630781371
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 599.44415,
+          "seconds": 40.600821566
+        },
+        {
+          "maxLagSamples": 0,
+          "online": 200,
+          "requestMS": 577.086983,
+          "seconds": 45.578294501
+        }
+      ],
+      "ok": true,
+      "requestedSeconds": 45,
+      "requests": 14794,
+      "responseBytes": 2261087986,
+      "secondsIncludingDrain": 45.573718262,
+      "statuses": {
+        "200": 14794
+      },
+      "success": 14794,
+      "successLatencyMS": {
+        "max": 848.887736,
+        "p50": 606.016866,
+        "p95": 724.226972,
+        "p99": 793.726313
+      },
+      "successRPS": 324.61691878969293,
+      "target": "https://127.0.0.1:19843",
+      "runtime": "go",
+      "label": "go-2",
+      "resources": {
+        "controller": {
+          "sampledSeconds": 44.640944480895996,
+          "cpuPercentOneCore": 97.74416851478816,
+          "cpuSeconds": 43.63392,
+          "rssMeanMiB": 39.66755995639535,
+          "rssPeakMiB": 41.0234375,
+          "pssMeanMiB": 33.14911882267442,
+          "pssPeakMiB": 34.50390625,
+          "peakCgroupMiB": 32.421875,
+          "throttledSeconds": 4.870681,
+          "maxThreads": 12,
+          "oomKills": 0
+        },
+        "php": {
+          "sampledSeconds": 44.640944480895996,
+          "cpuPercentOneCore": 37.70648268251458,
+          "cpuSeconds": 16.83253,
+          "rssMeanMiB": 206.06717841569767,
+          "rssPeakMiB": 206.10546875,
+          "pssMeanMiB": 28.701137808866278,
+          "pssPeakMiB": 28.8935546875,
+          "peakCgroupMiB": 29.66015625,
+          "throttledSeconds": 0.0,
+          "maxThreads": 9,
+          "oomKills": 0
+        },
+        "nginx": {
+          "sampledSeconds": 44.640944480895996,
+          "cpuPercentOneCore": 21.405631334904513,
+          "cpuSeconds": 9.555676,
+          "rssMeanMiB": 40.0234375,
+          "rssPeakMiB": 40.0234375,
+          "pssMeanMiB": 24.63210846656977,
+          "pssPeakMiB": 24.6748046875,
+          "peakCgroupMiB": 30.2109375,
+          "throttledSeconds": 0.0,
+          "maxThreads": 2,
+          "oomKills": 0
+        },
+        "load": {
+          "sampledSeconds": 44.640944480895996,
+          "cpuPercentOneCore": 20.24372715471413,
+          "cpuSeconds": 9.036991,
+          "rssMeanMiB": 56.948174055232556,
+          "rssPeakMiB": 60.515625,
+          "pssMeanMiB": 55.44574400436046,
+          "pssPeakMiB": 59.013671875,
+          "peakCgroupMiB": 61.82421875,
+          "throttledSeconds": 0.0,
+          "maxThreads": 7,
+          "oomKills": 0
+        }
+      },
+      "binarySHA256": "f9aa108bcaaf795fa146187a5164fc1b10713b7fae007d68dd61a5385b1cb511",
+      "binaryBytes": 9191584
+    }
+  ],
+  "cleanup": {
+    "isolatedServicesStopped": true,
+    "testListenersRemoved": true,
+    "existingServices": {
+      "nginx": {
+        "unchanged": true,
+        "active": true
+      },
+      "vistart-probe-agent": {
+        "unchanged": true,
+        "active": true
+      },
+      "vistart-probe-test-php": {
+        "unchanged": true,
+        "active": true
+      }
+    }
+  },
+  "interpretation": {
+    "cpuBottleneck": "Both controllers approached their identical 1-core CPU quota; PHP and Nginx were below theirs.",
+    "codeReviewCandidates": [
+      "Rust public board constructs an owned serde_json::Value tree under the shared state mutex, then serializes that tree for HTTP output.",
+      "Current Rust release profile uses opt-level=s."
+    ],
+    "causality": "These code paths are optimization candidates, not confirmed function-level CPU attribution; no sampled profiler was run during measured rounds.",
+    "scope": "Current controller binaries and specified configuration; this is not an Agent efficiency comparison or a long-term capacity guarantee."
+  }
+}

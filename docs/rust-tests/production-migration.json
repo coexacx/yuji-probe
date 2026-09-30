@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "health": {
+    "ok": true,
+    "runtime": "rust",
+    "service": "vistart-probe",
+    "version": "0.4.0-rust.1"
+  },
+  "onlineNodes": 3,
+  "authenticationAndMasterKeyPreserved": true,
+  "nodeSecretsAndSitePreserved": true,
+  "unrelatedServicesUnchanged": true,
+  "controllerSHA256": "fab386fb0a063e2d5b7291dd2791155a05194d8c3f0c66c3e0a089b8d4f07f06"
+}

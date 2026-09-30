@@ -1,0 +1,14 @@
+/storage/*
+!/storage/.gitkeep
+/bin/
+/build/
+/release/
+/SHA256SUMS.json
+**/target/
+**/node_modules/
+*.zip
+*.log
+.env
+.env.*
+signing.key
+*.qcow2

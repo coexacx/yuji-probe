@@ -1,0 +1,2 @@
+# Preserve upstream license files byte for byte.
+THIRD-PARTY-NOTICES/** -text -whitespace

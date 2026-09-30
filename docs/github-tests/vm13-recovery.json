@@ -1,0 +1,1 @@
+{"ok": true, "checks": ["managed-mode-does-not-spawn-competing-PHP-daemon", "systemd-service-start-restores-HTTPS-API", "crashed-controller-restarts-under-systemd", "repeat-install-refused-without-changing-credentials", "administrator-login-after-recovery", "private-paths-stay-unreachable", "authenticated-Agent-reconnects-after-controller-restart"], "runtime": "8.4.26"}

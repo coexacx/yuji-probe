@@ -1,0 +1,28 @@
+{
+  "checks": [
+    "forged-bearer",
+    "browser-origin-rejected",
+    "binary-frame-authenticated",
+    "binary-frame-rejected",
+    "malformed-json-authenticated",
+    "malformed-json-rejected",
+    "unknown-operation-authenticated",
+    "unknown-operation-rejected",
+    "bad-base64-authenticated",
+    "bad-base64-rejected",
+    "missing-metrics-authenticated",
+    "missing-metrics-rejected",
+    "oversize-frame-authenticated",
+    "oversize-frame-rejected",
+    "invalid-cpu-authenticated",
+    "invalid-cpu-rejected",
+    "legacy-agent-connects",
+    "duplicate-agent-rejected",
+    "legacy-metrics-without-network-fields-accepted",
+    "latency-nonce-issued",
+    "forged-latency-pong-rejected",
+    "initial-metrics-accepted",
+    "replayed-metrics-sequence-rejected"
+  ],
+  "ok": true
+}

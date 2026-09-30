@@ -1,0 +1,57 @@
+{
+  "at": "2026-09-29T22:56:06.713675+00:00",
+  "ok": true,
+  "sftpPhysicalVerification": {
+    "permissionPreserved": true,
+    "extendedAttributePreserved": true,
+    "crlfPreserved": true,
+    "symlinkPreserved": true,
+    "maxSizeSaveCorrect": true,
+    "noOriginalBackups": true
+  },
+  "testFilesRemoved": true,
+  "obsoleteUnregisteredTestAgentStopped": true,
+  "forwarderAndActiveTestAgentUnaffected": true,
+  "soak": {
+    "go": {
+      "progress": {
+        "at": "2026-09-29T22:53:07.612910414Z",
+        "elapsedSeconds": 5413.994436008,
+        "epochs": 9,
+        "metricMessages": 1800,
+        "plannedSeconds": 86400,
+        "protocolErrors": 0,
+        "roundTripBytes": 70778880
+      },
+      "resources": {
+        "samples": 560,
+        "firstRSSKiB": 4,
+        "lastRSSKiB": 12512,
+        "minRSSKiB": 4,
+        "maxRSSKiB": 13100,
+        "lastFDs": 9,
+        "lastCPUUsec": 4201882
+      }
+    },
+    "rust": {
+      "progress": {
+        "at": "2026-09-29T22:53:07.310159194Z",
+        "elapsedSeconds": 5413.593109076,
+        "epochs": 9,
+        "metricMessages": 1800,
+        "plannedSeconds": 86400,
+        "protocolErrors": 0,
+        "roundTripBytes": 70778880
+      },
+      "resources": {
+        "samples": 560,
+        "firstRSSKiB": 2896,
+        "lastRSSKiB": 1808,
+        "minRSSKiB": 1764,
+        "maxRSSKiB": 3072,
+        "lastFDs": 12,
+        "lastCPUUsec": 3003063
+      }
+    }
+  }
+}

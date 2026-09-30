@@ -1,0 +1,35 @@
+{
+  "ok": true,
+  "reports": [
+    {
+      "test": "revision-bound-to-SSH-session",
+      "ok": true
+    },
+    {
+      "test": "concurrent-save-no-silent-overwrite",
+      "ok": true,
+      "statuses": [
+        "saved",
+        "busy"
+      ]
+    },
+    {
+      "test": "bounded-SFTP-queue-and-responsive-terminals",
+      "requests": 96,
+      "ok": true,
+      "busy": 72,
+      "accepted": 24,
+      "p95ms": 544,
+      "maxms": 658
+    },
+    {
+      "test": "oversize-frame-closes-only-offending-session",
+      "ok": true
+    },
+    {
+      "test": "logout-revokes-active-file-access",
+      "ok": true
+    }
+  ],
+  "errors": []
+}

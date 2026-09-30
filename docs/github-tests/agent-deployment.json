@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "checks": [
+    "create-hidden-test-node-with-providerURL",
+    "SSH-host-key-verified-against-independent-host-file",
+    "host-trust-ticket-single-use",
+    "deployment-job-accepted",
+    "signed-Rust-Agent-fetch-verify-upload-install-and-WSS-report",
+    "real-metrics-network-and-version"
+  ],
+  "agentVersion": "0.1.3-rust.1"
+}

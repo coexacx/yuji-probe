@@ -1,0 +1,48 @@
+{
+  "agentFailures": 0,
+  "limits": {
+    "agentFailures": 0,
+    "httpErrors": 0,
+    "p95ms": 2000,
+    "p99ms": 5000
+  },
+  "metricsSent": 1160,
+  "ok": true,
+  "phases": [
+    {
+      "Agents": 10,
+      "Concurrency": 10,
+      "Requests": 150,
+      "Errors": 0,
+      "Statuses": {
+        "200": 150
+      },
+      "Seconds": 15.000904784,
+      "RPS": 9.99939684704821,
+      "P50MS": 18.159111,
+      "P95MS": 57.942663,
+      "P99MS": 77.21609,
+      "MaxMS": 86.241266,
+      "Online": 10,
+      "Metrics": 151
+    },
+    {
+      "Agents": 30,
+      "Concurrency": 30,
+      "Requests": 900,
+      "Errors": 0,
+      "Statuses": {
+        "200": 900
+      },
+      "Seconds": 30.003226311,
+      "RPS": 29.996774035932113,
+      "P50MS": 47.08225,
+      "P95MS": 99.919745,
+      "P99MS": 127.793339,
+      "MaxMS": 162.62308,
+      "Online": 30,
+      "Metrics": 901
+    }
+  ],
+  "target": "isolated-test-instance"
+}

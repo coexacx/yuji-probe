@@ -1,0 +1,41 @@
+{
+  "ok": true,
+  "results": [
+    {
+      "name": "public HTTPS version and privacy",
+      "ok": true,
+      "ms": 3529
+    },
+    {
+      "name": "production private paths and admin authentication",
+      "ok": true,
+      "ms": 2154
+    },
+    {
+      "name": "production settings preserved and redacted",
+      "ok": true,
+      "ms": 588
+    },
+    {
+      "name": "node 1 real SSH and SFTP edit",
+      "ok": true,
+      "ms": 6103
+    },
+    {
+      "name": "node 2 real SSH and SFTP edit",
+      "ok": true,
+      "ms": 6600
+    },
+    {
+      "name": "node 3 real SSH and SFTP edit",
+      "ok": true,
+      "ms": 18914
+    },
+    {
+      "name": "mobile board and logout privacy",
+      "ok": true,
+      "ms": 1117
+    }
+  ],
+  "errors": []
+}

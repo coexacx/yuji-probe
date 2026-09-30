@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "checks": [
+    "public-board-live-network-and-country-flag",
+    "public-detail-network-without-private-lease-fields",
+    "existing-admin-login",
+    "all-250-country-options-and-self-hosted-flags",
+    "create-private-provider-and-expiry-metadata",
+    "PHP-gateway-admin-CSRF-origin-and-private-file-boundaries",
+    "renewal-popup-groups-same-expiry-day",
+    "dismiss-only-current-visit-and-reopen-next-visit",
+    "renew-one-server-extends-30-days-and-rejects-replay",
+    "stop-renewal-preserves-expiry-and-removes-only-that-member",
+    "mobile-grouped-popup-layout",
+    "admin-only-provider-link-and-expiry-in-details",
+    "node-editor-roundtrips-provider-and-date",
+    "live-network-desktop-and-mobile-layout",
+    "SSH-and-file-edit-regression-with-enhanced-Agent",
+    "Telegram-renewal-option-and-no-unrequested-delivery",
+    "cleanup-fixtures-and-logout-clears-private-details",
+    "zero-browser-JavaScript-errors"
+  ],
+  "errors": [],
+  "flags": 250,
+  "originalNodeCount": 1
+}

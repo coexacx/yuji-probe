@@ -1,0 +1,60 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "test": "valid-signed-package",
+      "ok": true,
+      "exit": 0
+    },
+    {
+      "test": "tampered-signature",
+      "ok": true,
+      "exit": 1
+    },
+    {
+      "test": "wrong-version",
+      "ok": true,
+      "exit": 1
+    },
+    {
+      "test": "wrong-hash",
+      "ok": true,
+      "exit": 1
+    },
+    {
+      "test": "oversize-declaration",
+      "ok": true,
+      "exit": 1
+    },
+    {
+      "test": "manifest-size-bound",
+      "ok": true,
+      "exit": 1
+    },
+    {
+      "test": "path-traversal",
+      "ok": true,
+      "exit": 1
+    },
+    {
+      "test": "symlink-entry",
+      "ok": true,
+      "exit": 1
+    },
+    {
+      "test": "foreign-redirect",
+      "ok": true,
+      "exit": 1
+    },
+    {
+      "test": "http-downgrade",
+      "ok": true,
+      "exit": 1
+    },
+    {
+      "test": "redirect-loop",
+      "ok": true,
+      "exit": 1
+    }
+  ]
+}

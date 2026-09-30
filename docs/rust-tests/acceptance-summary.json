@@ -1,0 +1,93 @@
+{
+  "version": "0.4.0",
+  "controller": "0.4.0-rust.1",
+  "agent": "0.1.3-rust.1",
+  "verifiedAt": "2026-09-30T06:58:26+08:00",
+  "productionMigration": "complete",
+  "productionRustAgentCount": 3,
+  "testRustAgentCount": 1,
+  "binaries": {
+    "amd64": {
+      "sha256": "fab386fb0a063e2d5b7291dd2791155a05194d8c3f0c66c3e0a089b8d4f07f06",
+      "bytes": 5688512
+    },
+    "arm64": {
+      "sha256": "8b98f7a8dad86aacd64b626da3de5824afad0bfda1613c844c1b678182f26a00",
+      "bytes": 4790968
+    }
+  },
+  "tests": {
+    "freshInstallAndAPI": 81,
+    "securityAndRecovery": 16,
+    "testBrowser": 18,
+    "sftpConcurrencyGroups": 5,
+    "sftpExtendedGroups": 7,
+    "controllerProtocol": 23,
+    "realAutoDeployment": 6,
+    "productionBrowserGroups": 7,
+    "controllerUnitPerBuildMode": 13,
+    "agentUnit": 17
+  },
+  "load": {
+    "agentFailures": 0,
+    "limits": {
+      "agentFailures": 0,
+      "httpErrors": 0,
+      "p95ms": 2000,
+      "p99ms": 5000
+    },
+    "metricsSent": 1160,
+    "ok": true,
+    "phases": [
+      {
+        "Agents": 10,
+        "Concurrency": 10,
+        "Requests": 150,
+        "Errors": 0,
+        "Statuses": {
+          "200": 150
+        },
+        "Seconds": 15.000904784,
+        "RPS": 9.99939684704821,
+        "P50MS": 18.159111,
+        "P95MS": 57.942663,
+        "P99MS": 77.21609,
+        "MaxMS": 86.241266,
+        "Online": 10,
+        "Metrics": 151
+      },
+      {
+        "Agents": 30,
+        "Concurrency": 30,
+        "Requests": 900,
+        "Errors": 0,
+        "Statuses": {
+          "200": 900
+        },
+        "Seconds": 30.003226311,
+        "RPS": 29.996774035932113,
+        "P50MS": 47.08225,
+        "P95MS": 99.919745,
+        "P99MS": 127.793339,
+        "MaxMS": 162.62308,
+        "Online": 30,
+        "Metrics": 901
+      }
+    ],
+    "target": "isolated-test-instance"
+  },
+  "advisories": {
+    "controller": [
+      "RUSTSEC-2023-0071"
+    ],
+    "agent": [],
+    "frontend": [],
+    "assessment": "RSA private-key operations are unreachable with the current Ed25519-only managed-key policy; upstream advisory remains unresolved."
+  },
+  "limitations": [
+    "24-hour paired soak still running, not a completed 24-hour test",
+    "ARM64 cross-compiled, not tested on ARM64 hardware",
+    "Short controlled stress is not production capacity certification",
+    "Telegram queue/state and settings preservation tested; no unsolicited live message sent"
+  ]
+}

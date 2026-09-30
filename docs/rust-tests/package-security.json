@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "checkedAt": "2026-09-29T23:00:19.560023+00:00",
+  "filesScanned": 1190,
+  "productionCredentialPatternMatches": 0,
+  "liveServerAddressMatches": 0,
+  "privateKeyAndPasswordHashMatches": 0,
+  "noLiveStorage": true,
+  "noBundledBuildCache": true,
+  "note": "Pattern scan is a release hygiene check, not proof against every possible secret."
+}

@@ -1,0 +1,38 @@
+{
+  "ok": true,
+  "checks": [
+    "api-rate-limit-with-spoofed-client-ip-headers",
+    "password-brute-force-limited-despite-forged-source-headers",
+    "forged-agent-identity-rejected",
+    "browser-origin-agent-connection-rejected",
+    "foreign-origin-terminal-wss-rejected",
+    "anonymous-terminal-wss-rejected",
+    "unsupported-method-rejected",
+    "oversize-header-rejected",
+    "internal-health-requires-gateway-secret",
+    "incomplete-headers-and-body-time-out",
+    "isolated-worker-identified",
+    "supervisor-recovers-killed-worker",
+    "isolated-supervisor-identified",
+    "isolated-service-stopped-for-wss-wake-test",
+    "wss-route-wakes-stopped-service",
+    "woken-service-ready-and-still-authenticated"
+  ],
+  "measurements": {
+    "apiFirst429": 121,
+    "loginFirst429": 9,
+    "idle": [
+      {
+        "type": "headers",
+        "seconds": 10.01,
+        "closed": true
+      },
+      {
+        "type": "body",
+        "seconds": 10.01,
+        "closed": true
+      }
+    ],
+    "workerRecoverySeconds": 1.3
+  }
+}

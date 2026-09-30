@@ -1,0 +1,40 @@
+{
+  "results": [
+    {
+      "name": "visible wrap control and maximized workspace",
+      "ok": true,
+      "ms": 5714
+    },
+    {
+      "name": "256 KiB boundary read and save",
+      "ok": true,
+      "ms": 14153
+    },
+    {
+      "name": "symlink edit preserves the symlink",
+      "ok": true,
+      "ms": 7832
+    },
+    {
+      "name": "burst is bounded and terminal stays responsive",
+      "ok": true,
+      "ms": 4719
+    },
+    {
+      "name": "binary-oversize-hardlink-mixed-line-ending-protection",
+      "ok": true,
+      "ms": 8795
+    },
+    {
+      "name": "CRLF-and-file-metadata-preservation",
+      "ok": true,
+      "ms": 15701
+    },
+    {
+      "name": "logout closes an active SSH/SFTP session",
+      "ok": true,
+      "ms": 827
+    }
+  ],
+  "errors": []
+}
