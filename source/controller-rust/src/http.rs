@@ -63,6 +63,8 @@ async fn api(
         }
         let max_body = if c.path == "/api/admin/ops/restore" {
             24 * 1024 * 1024
+        } else if c.path == "/api/admin/theme" || c.path == "/api/admin/theme/preview" {
+            crate::theme::BODY_LIMIT
         } else {
             16384
         };
@@ -88,6 +90,9 @@ async fn api(
         }
         if c.path == "/api/admin/inspect-ssh" && c.method == "POST" {
             return deploy::inspect(app.clone(), c, bytes).await;
+        }
+        if c.path.starts_with("/api/admin/theme") && c.method != "GET" {
+            return crate::theme::change(app.clone(), c, bytes).await;
         }
         dispatch(&app, &c, &bytes)
     };
@@ -117,6 +122,7 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
             let x = i.new_session(&x.id, false)?;
             Ok(ApiReply::session(i.info(&x), &x.id))
         }
+        ("/api/public/theme", "GET") | ("/api/admin/theme", "GET") => crate::theme::read(&mut i),
         ("/api/public/nodes", "GET") => {
             let admin = i.session(&c.sid).is_some_and(|s| s.auth);
             if !i.data.site.public && !admin {
@@ -128,6 +134,8 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
                     nodes: Vec<&'a crate::model::PublicNode>,
                     site: &'a crate::model::Site,
                     preview: bool,
+                    #[serde(rename = "themeRevision")]
+                    theme_revision: &'a str,
                 }
                 let board = Board {
                     nodes: i
@@ -139,6 +147,7 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
                         .collect(),
                     site: &i.data.site,
                     preview: i.data.preview,
+                    theme_revision: &i.data.theme.revision,
                 };
                 let raw = serde_json::to_vec(&board).map_err(|_| ApiError::internal())?;
                 i.cache = Some((now(), Arc::from(raw)));
@@ -147,11 +156,15 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
             reply.raw = Some(i.cache.as_ref().unwrap().1.clone());
             Ok(reply)
         }
+        ("/api/admin/billing", "GET") => {
+            app.guard(&mut i, c, true, false)?;
+            Ok(ApiReply::ok(crate::billing::summary(&i.data.nodes, now())))
+        }
         ("/api/admin/nodes", "GET") => {
             app.guard(&mut i, c, true, false)?;
             let list: Vec<_> = i.data.nodes.iter().map(nodes::admin_node).collect();
             Ok(ApiReply::ok(
-                json!({"nodes":list,"site":i.data.site,"preview":i.data.preview}),
+                json!({"nodes":list,"site":i.data.site,"preview":i.data.preview,"themeRevision":i.data.theme.revision}),
             ))
         }
         ("/api/admin/nodes", "POST") => nodes::save_node(app, &mut i, c, "", body),

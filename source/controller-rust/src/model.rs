@@ -83,6 +83,14 @@ pub struct PublicNode {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Node {
+    #[serde(rename = "renewalCycle")]
+    pub renewal_cycle: crate::billing::RenewalCycle,
+    #[serde(rename = "renewalAnchorDay")]
+    pub renewal_anchor_day: u32,
+    #[serde(rename = "renewalAmount")]
+    pub renewal_amount: String,
+    #[serde(rename = "renewalCurrency")]
+    pub renewal_currency: String,
     pub notes: String,
     pub removing: bool,
     #[serde(rename = "providerName")]
@@ -137,6 +145,7 @@ pub struct Site {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Data {
+    pub theme: crate::theme::Theme,
     #[serde(rename = "commands", deserialize_with = "null_default")]
     pub commands: Vec<SavedCommand>,
     #[serde(rename = "preview")]
@@ -283,6 +292,10 @@ pub struct TelegramNodeState {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RenewalMember {
+    #[serde(rename = "renewalAmount")]
+    pub renewal_amount: String,
+    #[serde(rename = "renewalCurrency")]
+    pub renewal_currency: String,
     #[serde(rename = "nodeId")]
     pub node_id: String,
     #[serde(rename = "name")]

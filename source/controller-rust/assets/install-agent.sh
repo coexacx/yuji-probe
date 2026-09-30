@@ -2,19 +2,11 @@
 set -eu
 umask 077
 [ "$(id -u)" = 0 ]
-. /etc/os-release
-case "$ID" in debian|ubuntu) ;; *) exit 21 ;; esac
-if [ ! -s /etc/ssl/certs/ca-certificates.crt ] || ! command -v python3 >/dev/null; then
-    export DEBIAN_FRONTEND=noninteractive
-    apt-get update -qq
-    apt-get install -y --no-install-recommends ca-certificates python3
-fi
-command -v systemctl >/dev/null
-command -v useradd >/dev/null
+sh ./agent-platform.sh prepare >/dev/null
 probe_ssh_user=__SSH_USER__
-getent passwd vistart-probe >/dev/null || useradd --system --home-dir /var/lib/vistart-probe-agent --shell /usr/sbin/nologin vistart-probe
+getent passwd vistart-probe >/dev/null || useradd --system --user-group --home-dir /var/lib/vistart-probe-agent --shell /usr/sbin/nologin vistart-probe
 python3 - "$probe_ssh_user" <<'PY'
-import os,sys,json,pwd,pathlib,tempfile,stat,subprocess,time,hashlib
+import os,sys,json,pwd,pathlib,tempfile,stat,subprocess,time,hashlib,shutil
 user=pwd.getpwnam(sys.argv[1]);agent=pwd.getpwnam('vistart-probe')
 install=pathlib.Path('/opt/vistart-probe-agent');state=pathlib.Path('/var/lib/vistart-probe-agent')
 unit=pathlib.Path('/etc/systemd/system/vistart-probe-agent.service');sudo=pathlib.Path('/etc/sudoers.d/vistart-probe-recovery')
@@ -33,12 +25,16 @@ def capture(path):
         if not stat.S_ISREG(st.st_mode) or st.st_nlink!=1 or st.st_size>32*1024*1024:raise RuntimeError('unsafe managed file')
         files[path]=(path.read_bytes(),st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode))
     else:files[path]=None
+def relabel(path):
+    tool=shutil.which('restorecon')
+    if tool:subprocess.run([tool,'-F',str(path)],check=True,stdout=subprocess.DEVNULL)
 def atomic(path,raw,uid=0,gid=0,mode=0o600):
     fd,name=tempfile.mkstemp(prefix='.yuji-',dir=path.parent)
     try:
         os.fchown(fd,uid,gid);os.fchmod(fd,mode)
         with os.fdopen(fd,'wb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
         os.replace(name,path)
+        relabel(path)
     finally:
         if os.path.exists(name):os.unlink(name)
 def service(action,check=True):
@@ -59,7 +55,7 @@ def keyfile(home,uid,gid):
             st=os.fstat(f.fileno())
             if not stat.S_ISREG(st.st_mode) or st.st_nlink!=1 or st.st_size>1024*1024:raise RuntimeError('unsafe SSH keys')
             raw=f.read();existed=True
-    return dict(fd=fd,raw=raw,uid=uid,gid=gid,existed=existed)
+    return dict(fd=fd,raw=raw,uid=uid,gid=gid,existed=existed,path=directory/'authorized_keys')
 def putkeys(entry,raw):
     name='.yuji-'+os.urandom(16).hex()
     fd=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=entry['fd'])
@@ -68,6 +64,7 @@ def putkeys(entry,raw):
         with os.fdopen(fd,'wb') as f:f.write(raw);f.flush();os.fsync(f.fileno())
         os.rename(name,'authorized_keys',src_dir_fd=entry['fd'],dst_dir_fd=entry['fd'])
         os.fsync(entry['fd'])
+        relabel(entry['path'])
     finally:
         try:os.unlink(name,dir_fd=entry['fd'])
         except FileNotFoundError:pass

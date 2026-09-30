@@ -1,0 +1,3 @@
+(type yuji_probe_port_t)
+(typeattributeset port_type (yuji_probe_port_t))
+(allow httpd_t yuji_probe_port_t (tcp_socket (name_connect)))

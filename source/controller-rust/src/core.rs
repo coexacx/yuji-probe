@@ -350,6 +350,7 @@ pub struct Shared {
     pub http: reqwest::Client,
 }
 pub struct Inner {
+    pub theme_cache: Option<(String, std::sync::Arc<[u8]>)>,
     pub auth: Auth,
     pub data: Data,
     pub cache: Option<(i64, std::sync::Arc<[u8]>)>,
@@ -383,6 +384,7 @@ impl App {
             read_json(&dir.join("auth.json")).map_err(|_| "authentication state unavailable")?;
         let mut data: Data =
             read_json(&dir.join("nodes.json")).map_err(|_| "node state unavailable")?;
+        data.theme.validate().map_err(|_| "theme state invalid")?;
         if data.nodes.len() > 200 || data.commands.len() > 50 {
             return Err("state limits exceeded");
         }
@@ -449,6 +451,7 @@ impl App {
             .build()
             .map_err(|_| "HTTPS client unavailable")?;
         let inner = Inner {
+            theme_cache: None,
             cache: None,
             ops: crate::operations::load(&dir)?,
             auth,

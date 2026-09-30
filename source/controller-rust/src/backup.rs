@@ -366,6 +366,7 @@ fn secret_rewrap(app: &App, key: &[u8], id: &str, s: &mut NodeSecret) -> ApiResu
     rewrap(app, key, &format!("{id}:recovery"), &mut s.recovery_key)
 }
 fn restore(app: &App, i: &mut Inner, mut b: Bundle) -> ApiResult<bool> {
+    b.data.theme.validate()?;
     let master = Zeroizing::new(
         STANDARD
             .decode(&b.master)
@@ -483,6 +484,7 @@ fn restore(app: &App, i: &mut Inner, mut b: Bundle) -> ApiResult<bool> {
     i.trust.clear();
     i.jobs.clear();
     i.cache = None;
+    i.theme_cache = None;
     i.auth = b.auth;
     i.data = b.data;
     i.telegram = b.telegram;

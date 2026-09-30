@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 mod auth;
 mod backup;
+mod billing;
 mod core;
 mod deploy;
 mod files;
@@ -14,6 +15,7 @@ mod realtime;
 mod ssh;
 mod telegram;
 mod terminal;
+mod theme;
 use crate::{core::*, model::*};
 use std::{
     fs::{File, OpenOptions},

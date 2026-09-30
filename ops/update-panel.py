@@ -98,6 +98,9 @@ def unpack(raw,version,tmp):
     for name in ["app/bootstrap.php","public/index.php","bin/probe-linux-amd64"]:
         if not (target/name).is_file():raise ValueError("release is incomplete")
     return target
+def relabel(cfg):
+    if pathlib.Path("/sys/fs/selinux/enforce").exists():
+        subprocess.run(["/usr/sbin/restorecon","-RF",cfg["root"],str(pathlib.Path(cfg["state"]).parent)],check=True,timeout=90,stdout=subprocess.DEVNULL)
 def service(cfg,action):subprocess.run(["systemctl",action,cfg["service"]],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=45)
 def ownership(path,uid,gid):
     root=os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
@@ -234,6 +237,7 @@ def apply(cfg,request,cache=None):
             os.rename(root,old);root_moved=True
             if internal:os.rename(old/"storage",target/"storage");data_moved=True
             os.rename(target,root);swapped=True
+            relabel(cfg)
             service(cfg,"start");stopped=False
             check(cfg,version)
             if prior.exists():shutil.rmtree(prior)
@@ -255,7 +259,7 @@ def apply(cfg,request,cache=None):
                 replace_contents(data_parent,tmp/"state-snapshot")
                 ownership(data_parent,cfg["uid"],cfg["gid"])
             if stopped or swapped:
-                try:service(cfg,"start")
+                try:relabel(cfg);service(cfg,"start")
                 except Exception:pass
             raise
     return version

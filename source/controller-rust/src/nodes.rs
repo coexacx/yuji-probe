@@ -13,6 +13,9 @@ struct NodeInput {
     #[serde(rename = "providerURL")]
     provider_url: Option<String>,
     expires_at: Option<String>,
+    renewal_cycle: Option<crate::billing::RenewalCycle>,
+    renewal_amount: Option<String>,
+    renewal_currency: Option<String>,
     notify_renewal: Option<bool>,
     renewal_version: String,
     name: String,
@@ -28,6 +31,7 @@ struct NodeInput {
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 struct RenewalInput {
+    next_expires_at: Option<String>,
     action: String,
     version: String,
     expires_at: String,
@@ -73,6 +77,8 @@ pub fn admin_node(n: &Node) -> Value {
     let mut v = serde_json::to_value(n).expect("node serializable");
     v["renewalDue"] = json!(renewal_due(n, now()));
     v["renewalDay"] = json!(renewal_day(&n.expires_at));
+    v["renewalCycleLabel"] = json!(n.renewal_cycle.label());
+    v["nextRenewalExpiry"] = json!(crate::billing::next_expiry(n).ok());
     v
 }
 fn expiry(s: &str) -> Option<String> {
@@ -118,9 +124,19 @@ fn lease(n: &mut Node, v: &NodeInput, editing: bool) -> ApiResult<()> {
             "请检查供应商名称与站点，站点需使用 http:// 或 https://",
         ));
     }
-    let old = (n.expires_at.clone(), n.notify_renewal);
+    let old = (
+        n.expires_at.clone(),
+        n.notify_renewal,
+        n.renewal_cycle.clone(),
+        n.renewal_amount.clone(),
+        n.renewal_currency.clone(),
+    );
     if editing
-        && (v.expires_at.is_some() || v.notify_renewal.is_some())
+        && (v.expires_at.is_some()
+            || v.notify_renewal.is_some()
+            || v.renewal_cycle.is_some()
+            || v.renewal_amount.is_some()
+            || v.renewal_currency.is_some())
         && !n.expires_at.is_empty()
         && v.renewal_version != n.renewal_version
     {
@@ -132,10 +148,40 @@ fn lease(n: &mut Node, v: &NodeInput, editing: bool) -> ApiResult<()> {
     if let Some(b) = v.notify_renewal {
         n.notify_renewal = b;
     }
+    if let Some(cycle) = &v.renewal_cycle {
+        if !cycle.valid() {
+            return Err(ApiError::new(400, "续费周期为 1–120 个月或 1–3650 天"));
+        }
+        n.renewal_cycle = cycle.clone();
+    }
+    if let Some(currency) = &v.renewal_currency {
+        if crate::billing::precision(currency).is_none() {
+            return Err(ApiError::new(400, "请选择支持的币种"));
+        }
+        n.renewal_currency = currency.clone();
+    }
+    if let Some(amount) = &v.renewal_amount {
+        n.renewal_amount = amount.trim().into();
+    }
+    if !n.renewal_amount.is_empty() {
+        let value = crate::billing::minor(&n.renewal_amount, &n.renewal_currency)
+            .ok_or_else(|| ApiError::new(400, "续费金额不正确，请检查金额范围及币种小数位数"))?;
+        n.renewal_amount = crate::billing::decimal(value, &n.renewal_currency);
+    }
+    if old.0 != n.expires_at || old.2 != n.renewal_cycle || n.renewal_anchor_day == 0 {
+        n.renewal_anchor_day = crate::billing::date_anchor(&n.expires_at);
+    }
     if n.notify_renewal && n.expires_at.is_empty() {
         return Err(ApiError::new(400, "启用续费提醒前请填写到期时间"));
     }
-    if old != (n.expires_at.clone(), n.notify_renewal)
+    if old
+        != (
+            n.expires_at.clone(),
+            n.notify_renewal,
+            n.renewal_cycle.clone(),
+            n.renewal_amount.clone(),
+            n.renewal_currency.clone(),
+        )
         || (!n.expires_at.is_empty() && n.renewal_version.is_empty())
     {
         n.renewal_version = token()[..32].into();
@@ -370,16 +416,27 @@ pub fn renew(app: &App, i: &mut Inner, c: &Context, id: &str, body: &[u8]) -> Ap
         n.notify_renewal = false;
         ("node_renewal_stopped", "已停止该服务器的续费提醒")
     } else {
-        let d = DateTime::parse_from_rfc3339(&n.expires_at)
-            .map_err(|_| ApiError::new(400, "到期时间不正确"))?
-            + chrono::Duration::days(30);
-        if d.year() > 2199 {
-            return Err(ApiError::new(400, "请在服务器设置中调整到期时间"));
-        }
-        n.expires_at = d
-            .with_timezone(&Utc)
-            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        ("node_renewed", "已记录续费，到期时间顺延 30 天")
+        let next = if let Some(s) = &v.next_expires_at {
+            let normalized = expiry(s)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| ApiError::new(400, "新到期时间不正确"))?;
+            let new_date = DateTime::parse_from_rfc3339(&normalized)
+                .map_err(|_| ApiError::new(400, "新到期时间不正确"))?;
+            let old_date = DateTime::parse_from_rfc3339(&n.expires_at)
+                .map_err(|_| ApiError::new(400, "原到期时间不正确"))?;
+            if new_date <= old_date {
+                return Err(ApiError::new(400, "新到期时间必须晚于原到期时间"));
+            }
+            n.renewal_anchor_day = crate::billing::date_anchor(&normalized);
+            normalized
+        } else {
+            if n.renewal_anchor_day == 0 {
+                n.renewal_anchor_day = crate::billing::date_anchor(&n.expires_at);
+            }
+            crate::billing::next_expiry(&n)?
+        };
+        n.expires_at = next;
+        ("node_renewed", "已记录续费并更新到期时间")
     };
     n.renewal_version = token()[..32].into();
     let mut data = i.data.clone();

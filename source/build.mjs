@@ -8,8 +8,14 @@ await mkdir(path.join(stage,'assets'),{recursive:true});
 async function asset(name,body,extension){const hash=createHash('sha256').update(body).digest('hex').slice(0,12);const url=`/assets/${name}-${hash}.${extension}`;await writeFile(stage+url,body);return url;}
 const xterm=await asset('xterm',await readFile(root+'/frontend-tools/node_modules/@xterm/xterm/lib/xterm.mjs'),'js');
 const fit=await asset('fit',await readFile(root+'/frontend-tools/node_modules/@xterm/addon-fit/lib/addon-fit.mjs'),'js');
+const search=await asset('search',await readFile(root+'/frontend-tools/node_modules/@xterm/addon-search/lib/addon-search.mjs'),'js');
+const keys=await asset('terminal-keys',await readFile(root+'/src/terminal-keys.mjs'),'js');
+const billing=await asset('billing',await readFile(root+'/src/billing.mjs'),'js');
+const appearance=await asset('appearance',await readFile(root+'/src/appearance.mjs'),'js');
+const themes=await asset('themes',(await readFile(root+'/src/themes.mjs','utf8')).replace("'./appearance.mjs'",JSON.stringify(appearance)),'js');
+const anime=await asset('anime-sky',await readFile(root+'/src/anime-sky.svg'),'svg');
 const files=await asset('files',await readFile(root+'/src/files.mjs'),'js');
-const terminal=await asset('terminal',(await readFile(root+'/src/terminal.mjs','utf8')).replace("'./xterm.mjs'",JSON.stringify(xterm)).replace("'./addon-fit.mjs'",JSON.stringify(fit)).replace("'./files.mjs'",JSON.stringify(files)),'js');
+const terminal=await asset('terminal',(await readFile(root+'/src/terminal.mjs','utf8')).replace("'./terminal-keys.mjs'",JSON.stringify(keys)).replace("'./addon-search.mjs'",JSON.stringify(search)).replace("'./xterm.mjs'",JSON.stringify(xterm)).replace("'./addon-fit.mjs'",JSON.stringify(fit)).replace("'./files.mjs'",JSON.stringify(files)),'js');
 const qr=await asset('qrcode',await readFile(root+'/frontend-tools/node_modules/qrcode-generator/dist/qrcode.mjs'),'js');
 const authenticator=await asset('authenticator',(await readFile(root+'/src/authenticator.mjs','utf8')).replace("'./qrcode.mjs'",JSON.stringify(qr)),'js');
 let countrySource=await readFile(root+'/src/countries.mjs','utf8');
@@ -17,13 +23,13 @@ const dataset=JSON.parse(await readFile(root+'/controller-rust/assets/countries.
 for(const code of Object.keys(dataset)){const low=code.toLowerCase();const file=await asset('flag-'+low,await readFile(root+'/src/flags/'+low+'.svg'),'svg');countrySource=countrySource.replace(JSON.stringify('./flags/'+low+'.svg'),JSON.stringify(file));}
 const countries=await asset('countries',countrySource,'js');
 const network=await asset('network',await readFile(root+'/src/network.mjs'),'js');
-const renewals=await asset('renewals',await readFile(root+'/src/renewals.mjs'),'js');
+const renewals=await asset('renewals',(await readFile(root+'/src/renewals.mjs','utf8')).replace("'./billing.mjs'",JSON.stringify(billing)),'js');
 const offsite=await asset('offsite',await readFile(root+'/src/offsite.mjs'),'js');
 const inspector=await asset('inspector',await readFile(root+'/src/inspector.mjs'),'js');
 const operations=await asset('operations',(await readFile(root+'/src/operations.mjs','utf8')).replace("'./offsite.mjs'",JSON.stringify(offsite)),'js');
-const admin=await asset('admin',(await readFile(root+'/src/admin.mjs','utf8')).replace("'./operations.mjs'",JSON.stringify(operations)).replace("'./inspector.mjs'",JSON.stringify(inspector)).replace("'./terminal.mjs'",JSON.stringify(terminal)).replace("'./authenticator.mjs'",JSON.stringify(authenticator)).replace("'./countries.mjs'",JSON.stringify(countries)).replace("'./renewals.mjs'",JSON.stringify(renewals)),'js');
-const app=await asset('app',(await readFile(root+'/src/app.mjs','utf8')).replace("'./admin.mjs'",JSON.stringify(admin)).replace("'./countries.mjs'",JSON.stringify(countries)).replace("'./network.mjs'",JSON.stringify(network)),'js');
-const style=await asset('style',(await readFile(root+'/frontend-tools/node_modules/@xterm/xterm/css/xterm.css','utf8'))+'\n'+(await readFile(root+'/src/style.css','utf8')),'css');
+const admin=await asset('admin',(await readFile(root+'/src/admin.mjs','utf8')).replace("'./themes.mjs'",JSON.stringify(themes)).replace("'./appearance.mjs'",JSON.stringify(appearance)).replace("'./billing.mjs'",JSON.stringify(billing)).replace("'./operations.mjs'",JSON.stringify(operations)).replace("'./inspector.mjs'",JSON.stringify(inspector)).replace("'./terminal.mjs'",JSON.stringify(terminal)).replace("'./authenticator.mjs'",JSON.stringify(authenticator)).replace("'./countries.mjs'",JSON.stringify(countries)).replace("'./renewals.mjs'",JSON.stringify(renewals)),'js');
+const app=await asset('app',(await readFile(root+'/src/app.mjs','utf8')).replace("'./appearance.mjs'",JSON.stringify(appearance)).replace("'./admin.mjs'",JSON.stringify(admin)).replace("'./countries.mjs'",JSON.stringify(countries)).replace("'./network.mjs'",JSON.stringify(network)),'js');
+const style=await asset('style',(await readFile(root+'/frontend-tools/node_modules/@xterm/xterm/css/xterm.css','utf8'))+'\n'+(await readFile(root+'/src/style.css','utf8'))+'\n'+(await readFile(root+'/src/appearance.css','utf8')).replaceAll('__ANIME_BG__',anime),'css');
 const html=(await readFile(root+'/src/index.html','utf8')).replace('__STYLE__',style).replace('__SCRIPT__',app);
 if(html.includes('__STYLE__')||html.includes('__SCRIPT__'))throw Error('Unresolved build placeholders');
 await writeFile(stage+'/index.html',html);

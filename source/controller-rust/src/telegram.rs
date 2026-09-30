@@ -357,6 +357,8 @@ fn tick(app: &App, i: &mut Inner) {
                 name: n.public.name.clone(),
                 expires_at: n.expires_at.clone(),
                 renewal_version: n.renewal_version.clone(),
+                renewal_amount: n.renewal_amount.clone(),
+                renewal_currency: n.renewal_currency.clone(),
             });
             label(e);
             next.renewals
@@ -417,8 +419,17 @@ pub fn text(e: &TelegramEvent) -> String {
                     .unwrap_or_else(|_| "--:--".into());
                 out.push_str(&format!(
                     "\n• <b>{}</b>  <code>{at}</code>",
-                    html(&n.name, 60)
+                    html(&n.name, 45)
                 ));
+                if !n.renewal_amount.is_empty() {
+                    out.push_str(&format!(
+                        " · {}",
+                        html(
+                            &crate::billing::amount_label(&n.renewal_amount, &n.renewal_currency),
+                            32
+                        )
+                    ));
+                }
             }
             if e.renewal_nodes.len() > 20 {
                 out.push_str(&format!(
@@ -426,7 +437,29 @@ pub fn text(e: &TelegramEvent) -> String {
                     e.renewal_nodes.len() - 20
                 ));
             }
-            out.push_str("\n\n在面板标记“已续费”可顺延 30 天；选择“不再续费”可停止该服务器提醒。");
+            let mut totals: std::collections::BTreeMap<&str, u64> =
+                std::collections::BTreeMap::new();
+            let mut unpriced = 0;
+            for n in &e.renewal_nodes {
+                if let Some(v) = crate::billing::minor(&n.renewal_amount, &n.renewal_currency) {
+                    *totals.entry(&n.renewal_currency).or_default() += v;
+                } else {
+                    unpriced += 1;
+                }
+            }
+            for (currency, total) in totals.iter().take(8) {
+                out.push_str(&format!(
+                    "\n{currency} 合计  <b>{}</b>",
+                    crate::billing::decimal(*total, currency)
+                ));
+            }
+            if totals.len() > 8 {
+                out.push_str("\n更多币种请在面板查看。");
+            }
+            if unpriced > 0 {
+                out.push_str(&format!("\n{unpriced} 台金额未设置"));
+            }
+            out.push_str("\n\n在面板确认已续费可按设置周期更新到期时间；选择不再续费可停止提醒。");
             out
         }
         "offline" => format!(

@@ -43,6 +43,22 @@ pub fn stamp() -> u64 {
         .unwrap_or_default()
         .as_secs()
 }
+fn relabel(path: &Path) -> Result<()> {
+    // Only root-owned managed paths reach this helper. Restore distro policy
+    // after atomic replacement; never disable SELinux or change global booleans.
+    if Path::new("/sys/fs/selinux/enforce").exists() {
+        let status = Command::new("/usr/sbin/restorecon")
+            .arg("-F")
+            .arg("--")
+            .arg(path)
+            .status()
+            .map_err(|_| "SELinux relabel unavailable")?;
+        if !status.success() {
+            return Err("SELinux relabel failed");
+        }
+    }
+    Ok(())
+}
 fn atomic_owned(path: &Path, bytes: &[u8], mode: u32, owner: Option<(u32, u32)>) -> Result<()> {
     let random = rustls::crypto::ring::default_provider().secure_random;
     let mut nonce = [0u8; 16];
@@ -69,6 +85,7 @@ fn atomic_owned(path: &Path, bytes: &[u8], mode: u32, owner: Option<(u32, u32)>)
             .and_then(|_| f.sync_all())
             .map_err(|_| "write failed")?;
         fs::rename(&next, path).map_err(|_| "commit failed")?;
+        relabel(path)?;
         fs::File::open(path.parent().ok_or("path invalid")?)
             .and_then(|d| d.sync_all())
             .map_err(|_| "sync failed")

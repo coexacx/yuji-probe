@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 use std::{net::SocketAddr, time::Duration};
 use tokio::time::timeout;
 use zeroize::Zeroizing;
-const RELEASE_ORIGIN: &str = "https://github.com/coexacx/yuji-probe/releases/download/v0.6.1/";
-pub const AGENT_VERSION: &str = "0.2.0";
+const RELEASE_ORIGIN: &str = "https://github.com/coexacx/yuji-probe/releases/download/v0.7.0/";
+pub const AGENT_VERSION: &str = "0.2.1";
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct Inspect {
@@ -271,7 +271,7 @@ fn allowed_release_url(url: &reqwest::Url) -> bool {
     match url.host_str() {
         Some("github.com") => {
             url.path()
-                .starts_with("/coexacx/yuji-probe/releases/download/v0.6.1/")
+                .starts_with("/coexacx/yuji-probe/releases/download/v0.7.0/")
                 && url.query().is_none()
         }
         Some("release-assets.githubusercontent.com") => {
@@ -412,6 +412,11 @@ pub fn installation(
         ("agent", binary, 0o755),
         ("config.json", config, 0o600),
         ("install.sh", script.as_bytes(), 0o600),
+        (
+            "agent-platform.sh",
+            include_bytes!("../assets/agent-platform.sh").as_slice(),
+            0o600,
+        ),
         ("authorized-key", authorized.as_bytes(), 0o600),
         ("recovery-public", recovery_public.as_bytes(), 0o600),
         ("agent.manifest", manifest, 0o600),
@@ -467,16 +472,19 @@ async fn run(
         .await
         .map_err(|_| "SSH 验证失败，请核实用户名、密码与服务器指纹")?;
     progress(app, job, "running", "正在检查系统与架构");
-    let check=ssh::remote(&client,&node.username,password,"test $(id -u) = 0 && . /etc/os-release && printf '%s\\n' \"$ID\" && uname -m && command -v systemctl && command -v tar",&[]).await.map_err(|_|"系统检查失败，需要 root 或具有 sudo 权限的账户")?;
-    let lines: Vec<_> = check.split_whitespace().collect();
-    if lines.len() < 4 || !["debian", "ubuntu"].contains(&lines[0]) {
-        return Err("目前仅支持 Debian 与 Ubuntu 的 systemd 系统");
+    let check = ssh::remote(
+        &client,
+        &node.username,
+        password,
+        "sh -s -- prepare",
+        include_bytes!("../assets/agent-platform.sh"),
+    )
+    .await
+    .map_err(|_| "系统检查失败，请核实受支持的 Linux/systemd 版本、架构与软件源")?;
+    let arch = check.lines().last().unwrap_or("").trim();
+    if !["amd64", "arm64"].contains(&arch) {
+        return Err("服务器架构检查失败");
     }
-    let arch = match lines[1] {
-        "x86_64" => "amd64",
-        "aarch64" | "arm64" => "arm64",
-        _ => return Err("目前仅支持 amd64 与 arm64 架构"),
-    };
     progress(app, job, "running", "正在拉取并校验 Agent");
     let binary = fetch(app, arch)
         .await
@@ -556,7 +564,7 @@ mod tests {
     #[test]
     fn release_redirect_boundaries() {
         for url in [
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.6.1/stable.json",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.7.0/stable.json",
             "https://release-assets.githubusercontent.com/github-production-release-asset/1/abc?sig=example",
             "https://objects.githubusercontent.com/github-production-release-asset-2e65be/1/abc",
         ] {
@@ -566,13 +574,13 @@ mod tests {
             );
         }
         for url in [
-            "http://github.com/coexacx/yuji-probe/releases/download/v0.6.1/stable.json",
-            "https://github.com:444/coexacx/yuji-probe/releases/download/v0.6.1/stable.json",
-            "https://user:password@github.com/coexacx/yuji-probe/releases/download/v0.6.1/stable.json",
-            "https://github.com/coexacx/other/releases/download/v0.6.1/stable.json",
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.6.1/../../../login",
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.6.1/stable.json#fragment",
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.6.1/stable.json?redirect=1",
+            "http://github.com/coexacx/yuji-probe/releases/download/v0.7.0/stable.json",
+            "https://github.com:444/coexacx/yuji-probe/releases/download/v0.7.0/stable.json",
+            "https://user:password@github.com/coexacx/yuji-probe/releases/download/v0.7.0/stable.json",
+            "https://github.com/coexacx/other/releases/download/v0.7.0/stable.json",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.7.0/../../../login",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.7.0/stable.json#fragment",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.7.0/stable.json?redirect=1",
             "https://release-assets.githubusercontent.com.evil.example/github-production-release-asset/1",
             "https://release-assets.githubusercontent.com/elsewhere/1",
             "https://127.0.0.1/github-production-release-asset/1",
@@ -605,7 +613,7 @@ mod tests {
             .unwrap()
             .map(|e| e.unwrap().path().unwrap().into_owned())
             .collect();
-        assert_eq!(paths.len(), 6);
+        assert_eq!(paths.len(), 7);
         assert!(paths.iter().any(|p| p == "agent.manifest"));
         assert!(paths.iter().any(|p| p == "recovery-public"));
         assert!(paths.iter().all(|p| p.components().count() == 1));

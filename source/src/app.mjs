@@ -1,3 +1,4 @@
+import {refreshAppearance} from './appearance.mjs';
 import {initAdmin} from './admin.mjs';
 import {countryByCode,normalizedCountry} from './countries.mjs';
 import {createNetworkUI} from './network.mjs';
@@ -67,10 +68,11 @@ function patchCard(card,node){
  amount.append(el('span','metric-label','CPU 使用率'),number);
  cpu.append(amount,node.online?sparkline(node.history):el('span','sparkline-offline','等待重新连接'));
  const resources=el('div','resource-grid');
- resources.append(resource('内存','memory',node.memory,node.online),resource('磁盘','disk',diskTotal(node),node.online));
+ const memory=resource('内存','memory',node.memory,node.online);memory.classList.add('memory-resource');
+ resources.append(memory,resource('磁盘','disk',diskTotal(node),node.online));
  const sections=[cpu,resources];
  if(hasSwap(node)){
-  const swap=el('div','swap-row'),label=el('span','swap-label'),message=el('span','swap-usage');
+  const swap=el('div','memory-swap'),label=el('span','swap-label'),message=el('span','swap-usage');
   label.append(icon('swap'),document.createTextNode('Swap'));
   if(!node.online){message.textContent='暂无数据';}
   else{
@@ -78,7 +80,7 @@ function patchCard(card,node){
    message.textContent=display(node.swap.used)+' / '+display(node.swap.total)+' GiB';
    if(ratio!==null&&ratio>=85)message.classList.add('swap-warning');
   }
-  swap.append(label,message);sections.push(swap);
+  swap.append(label,message);memory.append(swap);
  }
  sections.push(networkUI.card(node));content.replaceChildren(...sections);
 }
@@ -99,7 +101,7 @@ $('#sort').addEventListener('change',event=>{state.sort=event.target.value;rende
 $('#clear-filters').addEventListener('click',()=>{state.query='';state.status='all';state.country='all';state.group='all';$('#group-filter').value='all';state.sort='default';$('#search').value='';$('#country-filter').value='all';$('#sort').value='default';render();$('#search').focus();});
 function updateRefresh(){const active=state.running;$('#refresh-toggle').setAttribute('aria-pressed',String(active));$('#refresh-toggle').setAttribute('aria-label',active?(demoMode?'暂停演示自动刷新':'暂停实时刷新'):(demoMode?'继续演示自动刷新':'继续实时刷新'));$('#refresh-label').textContent=active?(demoMode?'演示自动刷新':'实时刷新'):(demoMode?'演示已暂停':'已暂停刷新');$('.refresh-icon').replaceChildren(icon(active?'pause':'play'));$('#refresh-time').textContent=clock.format(state.updated);}
 $('#refresh-toggle').addEventListener('click',()=>{state.running=!state.running;updateRefresh();});
-function showDetail(node){const root=$('#dialog-content');const heading=el('div','dialog-header');const flagWrap=el('span','flag-wrap');flagWrap.append(flag(node.code));const titles=el('div');const title=el('h2','',node.name);title.id='dialog-title';titles.append(title,el('p','node-location',locationLabel(node)));heading.append(flagWrap,titles,statusBadge(node));const hardware=el('div','detail-hardware');for(const [label,value]of [['CPU 型号',node.cpuModel],['核心 / 架构',node.cores+' vCPU · '+node.arch],['操作系统',node.system],['主控通讯延时',latencyReading(node)],['运行时间',node.online?node.uptime:'离线 · 等待上报']]){const block=el('dl');block.append(el('dt','',label),el('dd','',value));hardware.append(block);}const sections=[heading,hardware];if(node.online){const chart=el('section','detail-chart');const chartHeader=el('div','section-heading');chartHeader.append(el('h3','','CPU 使用率'),el('span','',node.cpu.toFixed(1)+(demoMode?'% · 演示趋势':'% · 实时采样')));const chartSvg=sparkline(node.history,true);chartSvg.removeAttribute('aria-hidden');chartSvg.setAttribute('role','img');chartSvg.setAttribute('aria-label',(demoMode?'CPU 使用率演示曲线，当前 ':'CPU 使用率曲线，当前 ')+node.cpu.toFixed(1)+'%');const axis=el('div','chart-axis');axis.append(el('span','','最近 2 分钟'),el('span','','现在'));chart.append(chartHeader,chartSvg,axis);sections.push(chart);}else{sections.push(el('p','dialog-notice','最后一次上报于 '+node.lastSeenMinutes+' 分钟前。节点离线后暂停显示使用率，避免将过期数据作为当前状态。'));}const resources=el('div','detail-resource-row');resources.append(resource('内存','memory',node.memory,node.online));if(hasSwap(node))resources.append(resource('Swap','swap',node.swap,node.online));sections.push(resources);const disks=el('section');const label=el('div','section-heading');label.append(el('h3','','磁盘'),el('span','',node.disks.length+' 个卷 · 容量单位 GiB'));const list=el('ul','disk-list');for(const disk of node.disks){const item=el('li','disk-item');const row=el('div','disk-row');row.append(el('strong','',disk.name),el('span','',(node.online?display(disk.used):'—')+' / '+display(disk.total)+' GiB'));item.append(row,meter(node.online?percent(disk.used,disk.total):null,disk.name+'使用率'));list.append(item);}disks.append(label,list);sections.push(disks);sections.push(networkUI.detail(node));root.replaceChildren(...sections);admin?.decorateDetail(root,node);}
+function showDetail(node){const root=$('#dialog-content');const heading=el('div','dialog-header');const flagWrap=el('span','flag-wrap');flagWrap.append(flag(node.code));const titles=el('div');const title=el('h2','',node.name);title.id='dialog-title';titles.append(title,el('p','node-location',locationLabel(node)));heading.append(flagWrap,titles,statusBadge(node));const hardware=el('div','detail-hardware');for(const [label,value]of [['CPU 型号',node.cpuModel],['核心 / 架构',node.cores+' vCPU · '+node.arch],['操作系统',node.system],['主控通讯延时',latencyReading(node)],['运行时间',node.online?node.uptime:'离线 · 等待上报']]){const block=el('dl');block.append(el('dt','',label),el('dd','',value));if(label==='主控通讯延时')block.dataset.metric='latency';hardware.append(block);}const sections=[heading,hardware];if(node.online){const chart=el('section','detail-chart');const chartHeader=el('div','section-heading');chartHeader.append(el('h3','','CPU 使用率'),el('span','',node.cpu.toFixed(1)+(demoMode?'% · 演示趋势':'% · 实时采样')));const chartSvg=sparkline(node.history,true);chartSvg.removeAttribute('aria-hidden');chartSvg.setAttribute('role','img');chartSvg.setAttribute('aria-label',(demoMode?'CPU 使用率演示曲线，当前 ':'CPU 使用率曲线，当前 ')+node.cpu.toFixed(1)+'%');const axis=el('div','chart-axis');axis.append(el('span','','最近 2 分钟'),el('span','','现在'));chart.append(chartHeader,chartSvg,axis);sections.push(chart);}else{sections.push(el('p','dialog-notice','最后一次上报于 '+node.lastSeenMinutes+' 分钟前。节点离线后暂停显示使用率，避免将过期数据作为当前状态。'));}const resources=el('div','detail-resource-row');resources.append(resource('内存','memory',node.memory,node.online));if(hasSwap(node))resources.append(resource('Swap','swap',node.swap,node.online));sections.push(resources);const disks=el('section');const label=el('div','section-heading');label.append(el('h3','','磁盘'),el('span','',node.disks.length+' 个卷 · 容量单位 GiB'));const list=el('ul','disk-list');for(const disk of node.disks){const item=el('li','disk-item');const row=el('div','disk-row');row.append(el('strong','',disk.name),el('span','',(node.online?display(disk.used):'—')+' / '+display(disk.total)+' GiB'));item.append(row,meter(node.online?percent(disk.used,disk.total):null,disk.name+'使用率'));list.append(item);}disks.append(label,list);sections.push(disks);sections.push(networkUI.detail(node));root.replaceChildren(...sections);admin?.decorateDetail(root,node);}
 let dialogTrigger=null;
 function openDetail(id){const node=nodes.find(n=>n.id===id);if(!node)return;dialogTrigger={id,detail:document.activeElement?.classList.contains('detail-link')};state.dialogId=id;showDetail(node);$('#node-dialog').showModal();$('#dialog-close').focus();}
 $('#dialog-close').addEventListener('click',()=>$('#node-dialog').close());
@@ -115,7 +117,8 @@ function applySite(site){
  document.querySelector('meta[name="description"]').content=name+' 服务器状态看板。查看节点所在地区、CPU、内存、Swap、磁盘与网络流量。';
  state.refreshSeconds=site.refreshSeconds||5;
 }
-function applyData(list,site,preview){
+function applyData(list,site,preview,themeRevision){
+ refreshAppearance(themeRevision);
  demoMode=preview;applySite(site);
  const oldById=new Map(nodes.map(n=>[n.id,n]));
  nodes.splice(0,nodes.length,...list.map(n=>{const old=oldById.get(n.id);const c=countryByCode.get(normalizedCountry(n.code));if(c)n.country=c.name;if(n.demo&&old){n.cpu=old.cpu;n.history=old.history;}if(!baseCPU.has(n.id)&&finite(n.cpu))baseCPU.set(n.id,n.cpu);return n;}));
