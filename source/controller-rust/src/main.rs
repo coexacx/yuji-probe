@@ -4,7 +4,6 @@ mod backup;
 mod core;
 mod deploy;
 mod files;
-mod history;
 mod http;
 mod migration;
 mod model;

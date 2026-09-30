@@ -1,0 +1,26 @@
+{
+  "version": "0.5.1",
+  "agentVersion": "0.2.0",
+  "durationSeconds": 20,
+  "simulatedNodes": 200,
+  "concurrentClients": 200,
+  "requests": 16807,
+  "errors": 0,
+  "successRPS": 831.0169650160342,
+  "p95MS": 283.740944,
+  "finalOnline": 200,
+  "finalLatestMatched": 200,
+  "controller": {
+    "sampledSeconds": 19.85956335067749,
+    "cpuPercentOneCore": 47.790652958521484,
+    "cpuSeconds": 9.491015,
+    "rssMeanMiB": 18.065892269736842,
+    "rssPeakMiB": 18.1953125,
+    "pssMeanMiB": 15.46350740131579,
+    "pssPeakMiB": 15.56640625,
+    "peakCgroupMiB": 13.86328125,
+    "throttledSeconds": 0.0,
+    "maxThreads": 6,
+    "oomKills": 0
+  }
+}

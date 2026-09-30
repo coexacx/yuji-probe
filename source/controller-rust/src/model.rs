@@ -80,8 +80,6 @@ pub struct PublicNode {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Node {
-    #[serde(default = "crate::operations::default_policy")]
-    pub policy: crate::operations::Policy,
     pub removing: bool,
     #[serde(rename = "providerName")]
     pub provider_name: String,
@@ -253,6 +251,8 @@ pub struct SignedRelease {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TelegramConfig {
+    #[serde(rename = "notifyLogin")]
+    pub login: bool,
     #[serde(rename = "notifyRenewal")]
     pub renewal: bool,
     #[serde(rename = "enabled")]
@@ -355,6 +355,7 @@ pub struct TelegramState {
 impl Default for TelegramConfig {
     fn default() -> Self {
         Self {
+            login: false,
             enabled: false,
             token: String::new(),
             chat_id: String::new(),

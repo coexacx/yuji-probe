@@ -281,14 +281,12 @@ pub fn delete_node(app: &App, i: &mut Inner, c: &Context, id: &str) -> ApiResult
         i.ops.transfers.remove(id);
         i.ops.retired.remove(id);
         i.ops.removal_names.remove(id);
-        i.ops.tracks.remove(id);
         crate::operations::save(app, i)?;
 
         let mut data = i.data.clone();
         data.nodes.retain(|n| n.public.id != id);
         data.secrets.remove(id);
         app.save_data(i, data)?;
-        crate::history::remove(app, id);
         crate::telegram::invalidate(app, i);
         app.record(i, "node_removed_offline", &n.public.name);
         return Ok(ApiReply::ok(json!({"ok":true})));

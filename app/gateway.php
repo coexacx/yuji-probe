@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 function probe_forward(string $path,array $config):void {
- if(!preg_match('#^/api/(?:session|login|logout|public/nodes|migrate|admin/(?:nodes(?:/[a-zA-Z0-9_-]+)?|renewals/[a-zA-Z0-9_-]{1,64}|site|telegram(?:/test)?|password|reauth|ops/[a-zA-Z0-9_/-]+|audit|commands(?:/[a-zA-Z0-9_-]+)?|terminal-ticket|inspect-ssh|trust-ssh|deploy(?:/[a-zA-Z0-9_-]+)?|mfa/(?:setup|enable|disable)))$#D',$path))throw new ProbeError('接口不存在',404);
+ if(!preg_match('#^/api/(?:session|login|logout|public/nodes|migrate|admin/(?:nodes(?:/[a-zA-Z0-9_-]+)?|renewals/[a-zA-Z0-9_-]{1,64}|site|telegram(?:/(?:test|preview))?|password|reauth|ops/[a-zA-Z0-9_/-]+|audit|commands(?:/[a-zA-Z0-9_-]+)?|terminal-ticket|inspect-ssh|trust-ssh|deploy(?:/[a-zA-Z0-9_-]+)?|mfa/(?:setup|enable|disable)))$#D',$path))throw new ProbeError('接口不存在',404);
  $method=$_SERVER['REQUEST_METHOD']??'GET';if(!in_array($method,['GET','POST','PUT','PATCH','DELETE'],true))throw new ProbeError('请求方法不正确',405);
  probe_start($config);$headers=['Host: '.parse_url($config['origin'],PHP_URL_HOST),'X-Probe-Gateway: '.probe_gateway_key()];
  $ip=$_SERVER['REMOTE_ADDR']??'';if(filter_var($ip,FILTER_VALIDATE_IP))$headers[]='X-Real-IP: '.$ip;

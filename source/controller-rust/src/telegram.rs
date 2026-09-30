@@ -40,7 +40,7 @@ fn save(app: &App, i: &mut Inner, next: TelegramState) -> bool {
 }
 pub fn view(i: &Inner) -> Value {
     let s = &i.telegram;
-    json!({"enabled":s.config.enabled,"hasToken":!s.config.token.is_empty(),"chatId":s.config.chat_id,"notifyOnline":s.config.online,"notifyOffline":s.config.offline,"notifyRenewal":s.config.renewal,"offlineDelaySeconds":20,"pending":s.queue.len(),"lastSuccess":s.last_success,"lastError":if i.telegram_error.is_empty(){&s.last_error}else{&i.telegram_error},"test":s.test,"dropped":s.dropped})
+    json!({"enabled":s.config.enabled,"hasToken":!s.config.token.is_empty(),"chatId":s.config.chat_id,"notifyOnline":s.config.online,"notifyOffline":s.config.offline,"notifyRenewal":s.config.renewal,"notifyLogin":s.config.login,"offlineDelaySeconds":20,"pending":s.queue.len(),"lastSuccess":s.last_success,"lastError":if i.telegram_error.is_empty(){&s.last_error}else{&i.telegram_error},"test":s.test,"dropped":s.dropped})
 }
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
@@ -55,6 +55,8 @@ struct Input {
     offline: bool,
     #[serde(rename = "notifyRenewal")]
     renewal: Option<bool>,
+    #[serde(rename = "notifyLogin")]
+    login: Option<bool>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,6 +65,9 @@ pub fn api(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<ApiR
     app.guard(i, c, true, c.method != "GET")?;
     if c.path == "/api/admin/telegram" && c.method == "GET" {
         return Ok(ApiReply::ok(view(i)));
+    }
+    if c.path == "/api/admin/telegram/preview" && c.method == "GET" {
+        return Ok(ApiReply::ok(previews(i)));
     }
     if c.path == "/api/admin/telegram" && c.method == "PUT" {
         let mut v: Input = decode(body)?;
@@ -89,10 +94,11 @@ pub fn api(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<ApiR
                 .map_err(|_| ApiError::internal())?;
         }
         let renewal = v.renewal.unwrap_or(next.config.renewal);
+        let login = v.login.unwrap_or(next.config.login);
         if v.enabled
             && (encrypted.is_empty()
                 || v.chat_id.is_empty()
-                || (!v.online && !v.offline && !renewal))
+                || (!v.online && !v.offline && !renewal && !login))
         {
             return Err(ApiError::new(
                 400,
@@ -106,6 +112,7 @@ pub fn api(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<ApiR
             online: v.online,
             offline: v.offline,
             renewal,
+            login,
         };
         next.nodes = i
             .data
@@ -190,13 +197,19 @@ fn member_current(i: &Inner, m: &RenewalMember) -> bool {
         })
 }
 fn event_current(i: &Inner, e: &TelegramEvent) -> bool {
-    if ["online", "offline"].contains(&e.kind.as_str()) {
-        return i.data.nodes.iter().any(|n| {
-            n.public.id == e.node_id && !n.removing && n.policy.maintenance_until <= now()
-        });
+    match e.kind.as_str() {
+        "online" | "offline" => i
+            .data
+            .nodes
+            .iter()
+            .any(|n| n.public.id == e.node_id && !n.removing),
+        "renewal" => {
+            !e.renewal_nodes.is_empty() && e.renewal_nodes.iter().all(|m| member_current(i, m))
+        }
+        "security" => i.telegram.config.login,
+        "test" => true,
+        _ => false,
     }
-    e.kind != "renewal"
-        || (!e.renewal_nodes.is_empty() && e.renewal_nodes.iter().all(|m| member_current(i, m)))
 }
 fn label(e: &mut TelegramEvent) {
     if let Some(first) = e.renewal_nodes.first() {
@@ -258,18 +271,6 @@ fn tick(app: &App, i: &mut Inner) {
             continue;
         }
         let id = &node.public.id;
-        if node.policy.maintenance_until > t {
-            next.nodes.insert(
-                id.clone(),
-                TelegramNodeState {
-                    online: node.public.online,
-                    offline_since: 0,
-                },
-            );
-            present.insert(id.clone());
-            changed = true;
-            continue;
-        }
         present.insert(id.clone());
         let known = next.nodes.contains_key(id);
         let mut state = next.nodes.get(id).cloned().unwrap_or_default();
@@ -369,7 +370,8 @@ fn tick(app: &App, i: &mut Inner) {
         keep
     });
     next.queue.retain(|e| {
-        let keep = (e.kind == "test" || e.kind == "renewal" || present.contains(&e.node_id))
+        let keep = (matches!(e.kind.as_str(), "test" | "renewal" | "security")
+            || present.contains(&e.node_id))
             && event_current(i, e);
         changed |= !keep;
         keep
@@ -378,65 +380,111 @@ fn tick(app: &App, i: &mut Inner) {
         save(app, i, next);
     }
 }
+fn html(value: &str, limit: usize) -> String {
+    // Only generated markup is trusted. Bound Unicode length before entity escaping.
+    let clipped: String = value
+        .chars()
+        .take(limit)
+        .filter(|c| !c.is_control())
+        .collect();
+    clipped
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
 pub fn text(e: &TelegramEvent) -> String {
     let when = zone()
         .timestamp_opt(e.at, 0)
         .single()
         .map(|v| v.format("%Y-%m-%d %H:%M:%S").to_string())
         .unwrap_or_default();
-    if ["resource", "security"].contains(&e.kind.as_str()) {
-        return format!(
-            "{} · {}\n{}\n时间：{when}（UTC+8）",
-            e.site,
-            if e.kind == "resource" {
-                "资源提醒"
-            } else {
-                "账户安全"
-            },
-            e.name
-        );
-    }
-    if e.kind == "test" {
-        return format!(
-            "{} · Telegram 测试通知\n通知服务已连接。\n时间：{when}（UTC+8）",
-            e.site
-        );
-    }
-    if e.kind == "renewal" {
-        let mut text = format!(
-            "{} · 服务器续费提醒\n到期日：{}（UTC+8）\n待续费：{} 台\n",
-            e.site,
-            e.renewal_day,
-            e.renewal_nodes.len()
-        );
-        for (k, n) in e.renewal_nodes.iter().enumerate() {
-            if k >= 20 {
-                text.push_str(&format!(
-                    "另有 {} 台，请在面板查看。\n",
+    let site = html(&e.site, 60);
+    let footer = format!("\n\n<i>{when} · UTC+8</i>");
+    let mut message = match e.kind.as_str() {
+        "test" => format!("🔔 <b>通知测试</b>\n{site}\n\n通知已连接，后续提醒将发送到此会话。"),
+        "security" => format!("🔐 <b>管理员登录</b>\n{site}\n\n{}", html(&e.name, 180)),
+        "renewal" => {
+            let mut out = format!(
+                "📅 <b>服务器续费提醒</b>\n{site}\n\n到期日  <b>{}</b> · UTC+8\n待续费  <b>{} 台</b>\n",
+                html(&e.renewal_day, 10),
+                e.renewal_nodes.len()
+            );
+            for n in e.renewal_nodes.iter().take(20) {
+                let at = DateTime::parse_from_rfc3339(&n.expires_at)
+                    .map(|v| v.with_timezone(&zone()).format("%H:%M").to_string())
+                    .unwrap_or_else(|_| "--:--".into());
+                out.push_str(&format!(
+                    "\n• <b>{}</b>  <code>{at}</code>",
+                    html(&n.name, 60)
+                ));
+            }
+            if e.renewal_nodes.len() > 20 {
+                out.push_str(&format!(
+                    "\n另有 {} 台，请在面板查看。",
                     e.renewal_nodes.len() - 20
                 ));
-                break;
             }
-            let at = DateTime::parse_from_rfc3339(&n.expires_at)
-                .map(|v| v.with_timezone(&zone()).format("%H:%M").to_string())
-                .unwrap_or_default();
-            text.push_str(&format!("• {} · {at}\n", n.name));
+            out.push_str("\n\n在面板标记“已续费”可顺延 30 天；选择“不再续费”可停止该服务器提醒。");
+            out
         }
-        text.push_str(
-            "登录面板选择“已续费”可顺延 30 天；选择“不再续费该服务器”可关闭该服务器提醒。",
-        );
-        return text;
-    }
-    format!(
-        "{} · {}\n服务器：{}\n时间：{when}（UTC+8）",
-        e.site,
-        if e.kind == "offline" {
-            "服务器已离线"
-        } else {
-            "服务器已上线"
-        },
-        e.name
-    )
+        "offline" => format!(
+            "🔴 <b>服务器离线</b>\n{site}\n\n服务器  <b>{}</b>\n连续 20 秒未恢复连接，请检查服务器状态。",
+            html(&e.name, 60)
+        ),
+        _ => format!(
+            "🟢 <b>服务器上线</b>\n{site}\n\n服务器  <b>{}</b>\n已连接，监控数据正在更新。",
+            html(&e.name, 60)
+        ),
+    };
+    message.push_str(&footer);
+    message
+}
+fn payload(chat: &str, text: &str, origin: &str) -> Value {
+    json!({"chat_id":chat,"text":text,"parse_mode":"HTML","link_preview_options":{"is_disabled":true},
+        "reply_markup":{"inline_keyboard":[[{"text":"打开面板","url":origin}]]}})
+}
+fn previews(i: &Inner) -> Value {
+    let name = i
+        .data
+        .nodes
+        .iter()
+        .find(|n| !n.removing)
+        .map(|n| n.public.name.as_str())
+        .unwrap_or("示例服务器");
+    let at = now();
+    let expiry = zone().timestamp_opt(at + 3 * 86400, 0).single().unwrap();
+    let rows: Vec<_> = [
+        ("offline", "服务器离线"),
+        ("online", "服务器上线"),
+        ("renewal", "续费提醒"),
+        ("security", "管理员登录"),
+        ("test", "测试通知"),
+    ]
+    .into_iter()
+    .map(|(kind, label)| {
+        let e = TelegramEvent {
+            kind: kind.into(),
+            site: i.data.site.name.clone(),
+            name: if kind == "security" {
+                "登录来源  192.0.2.1".into()
+            } else {
+                name.into()
+            },
+            at,
+            renewal_day: expiry.format("%Y-%m-%d").to_string(),
+            renewal_nodes: vec![RenewalMember {
+                name: name.into(),
+                expires_at: expiry.to_rfc3339(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        json!({"kind":kind,"label":label,"html":text(&e)})
+    })
+    .collect();
+    json!({"previews":rows})
 }
 #[derive(Default)]
 struct Delivery {
@@ -451,7 +499,7 @@ async fn send(app: &App, secret: &str, chat: &str, text: &str) -> Delivery {
             .http
             .post(format!("https://api.telegram.org/bot{secret}/sendMessage"))
             .timeout(Duration::from_secs(10))
-            .json(&json!({"chat_id":chat,"text":text,"link_preview_options":{"is_disabled":true}}))
+            .json(&payload(chat, text, &app.0.origin))
             .send()
             .await
             .map_err(|_| ())?;
@@ -715,6 +763,23 @@ mod queue_tests {
             assert_eq!(i.telegram.queue.len(), 2);
             assert_eq!(i.telegram.queue[1].kind, "online");
             i.telegram.queue.clear();
+            i.telegram.config.token = "test-only-no-network".into();
+            queue_notice(&app, &mut i, "Admin logged in", "security");
+            assert!(i.telegram.queue.is_empty());
+            i.telegram.config.login = true;
+            queue_notice(&app, &mut i, "Admin logged in", "security");
+            tick(&app, &mut i);
+            assert_eq!(i.telegram.queue.len(), 1);
+            assert_eq!(i.telegram.queue[0].kind, "security");
+            i.telegram.queue.push(TelegramEvent {
+                kind: "resource".into(),
+                ..Default::default()
+            });
+            invalidate(&app, &mut i);
+            assert_eq!(i.telegram.queue.len(), 1);
+            i.telegram.config.login = false;
+            invalidate(&app, &mut i);
+            assert!(i.telegram.queue.is_empty());
             i.telegram.config.renewal = true;
             tick(&app, &mut i);
             assert_eq!(i.telegram.queue.len(), 1);
@@ -754,7 +819,11 @@ mod queue_tests {
 }
 
 pub fn queue_notice(app: &App, i: &mut Inner, message: &str, kind: &str) {
-    if !i.telegram.config.enabled || i.telegram.config.token.is_empty() {
+    if !i.telegram.config.enabled
+        || i.telegram.config.token.is_empty()
+        || kind != "security"
+        || !i.telegram.config.login
+    {
         return;
     }
     let mut next = i.telegram.clone();
@@ -773,4 +842,60 @@ pub fn queue_notice(app: &App, i: &mut Inner, message: &str, kind: &str) {
         ..Default::default()
     });
     let _ = save(app, i, next);
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+    #[test]
+    fn escapes_untrusted_names_and_uses_panel_button() {
+        let e = TelegramEvent {
+            kind: "offline".into(),
+            site: "<script>&".into(),
+            name: "<b onclick=x>bad</b>".into(),
+            ..Default::default()
+        };
+        let message = text(&e);
+        assert!(!message.contains("<script>"));
+        assert!(message.contains("&lt;b onclick=x&gt;bad&lt;/b&gt;"));
+        assert!(message.contains("<b>服务器离线</b>"));
+        let request = payload("-100123", &message, "https://probe.example");
+        assert_eq!(request["parse_mode"], "HTML");
+        assert_eq!(
+            request["reply_markup"]["inline_keyboard"][0][0]["url"],
+            "https://probe.example"
+        );
+        assert_eq!(request["link_preview_options"]["is_disabled"], true);
+    }
+    #[test]
+    fn grouped_renewals_stay_inside_telegram_size_limit() {
+        let e = TelegramEvent {
+            kind: "renewal".into(),
+            site: "😀".repeat(200),
+            renewal_day: "2026-10-03".into(),
+            renewal_nodes: (0..200)
+                .map(|_| RenewalMember {
+                    name: "😀".repeat(200),
+                    expires_at: "2026-10-03T10:00:00Z".into(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let message = text(&e);
+        // UTF-16 is a conservative count; Telegram excludes formatting tags.
+        assert!(message.encode_utf16().count() < 4096);
+        assert!(message.contains("另有 180 台"));
+        assert_eq!(message.matches("10:00").count(), 0);
+        assert_eq!(message.matches("18:00").count(), 20);
+    }
+    #[test]
+    fn old_notification_config_preserves_choices_with_login_disabled() {
+        let cfg: TelegramConfig = serde_json::from_value(
+            json!({"enabled":true,"notifyOnline":false,"notifyOffline":true,"notifyRenewal":false}),
+        )
+        .unwrap();
+        assert!(cfg.enabled && cfg.offline);
+        assert!(!cfg.online && !cfg.renewal && !cfg.login);
+    }
 }

@@ -111,10 +111,8 @@ pub async fn tick(app: &App) {
                 if let Some(link) = i.agents.remove(&id) {
                     link.stop.cancel();
                 }
-                i.ops.tracks.remove(&id);
                 i.ops.removal_names.remove(&id);
                 i.ops.retired.remove(&id);
-                crate::history::remove(&app, &id);
             }
         }
         app.record(

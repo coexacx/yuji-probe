@@ -149,8 +149,8 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
             .find(|n| n.public.id == ticket.node_id)
             .cloned()
             .ok_or_else(|| ApiError::new(409, "节点当前未连接"))?;
-        if node.removing || (!node.policy.terminal && node.policy.files == "off") {
-            return Err(ApiError::new(403, "该节点仅允许监控"));
+        if node.removing {
+            return Err(ApiError::new(403, "服务器正在移除"));
         }
         let link = i
             .agents
@@ -230,7 +230,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         }
         Ok(channel)
     };
-    let channel = if node.policy.terminal {
+    let channel = {
         match timeout(Duration::from_secs(12), terminal).await {
             Ok(Ok(v)) => Some(v),
             _ => {
@@ -247,8 +247,6 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                 return;
             }
         }
-    } else {
-        None
     };
     let (shell_read, shell_write) = if let Some(channel) = channel {
         let (r, w) = channel.split();
@@ -272,7 +270,13 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     };
     let cancel = stop.clone();
     tasks.spawn(async move{loop{tokio::select!{_=cancel.cancelled()=>break,m=send_queue.recv()=>{let Some(m)=m else{break};if !matches!(timeout(Duration::from_secs(5),ws_write.send(m)).await,Ok(Ok(()))){break}}}}cancel.cancel();});
-    let _=out.send(WS::Text(json!({"type":"ready","files":node.policy.files!="off","terminal":node.policy.terminal}).to_string().into())).await;
+    let _ = out
+        .send(WS::Text(
+            json!({"type":"ready","files":true,"terminal":true})
+                .to_string()
+                .into(),
+        ))
+        .await;
     let (file_tx, mut file_rx) = mpsc::channel::<files::Request>(2);
     let mut file_service = files::Files::new(
         app.clone(),

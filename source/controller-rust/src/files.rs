@@ -401,11 +401,7 @@ impl Files {
                 .nodes
                 .iter()
                 .find(|n| n.public.id == self.node)
-                .is_some_and(|n| {
-                    !n.removing
-                        && n.policy.files != "off"
-                        && (r.action != "save" || n.policy.files == "write")
-                })
+                .is_some_and(|n| !n.removing)
         };
         if !allowed {
             return Err(error("permission", "该节点不允许此文件操作"));
@@ -593,17 +589,7 @@ impl Files {
         if !text_file(&bytes) {
             return Err(error("binary", "该文件不是 UTF-8 文本，不能在线编辑"));
         }
-        let mut reason = self.reason(c, path, &bytes).await;
-        if self
-            .app
-            .lock()
-            .data
-            .nodes
-            .iter()
-            .any(|n| n.public.id == self.node && n.policy.files != "write")
-        {
-            reason = "此节点文件访问为只读".into();
-        }
+        let reason = self.reason(c, path, &bytes).await;
         let snapshot = self.remember(requested, path, &attr, &bytes, reason.is_empty());
         self.app
             .record(&mut self.app.lock(), "file_read", &self.name);
