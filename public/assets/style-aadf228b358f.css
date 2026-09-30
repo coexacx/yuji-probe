@@ -435,3 +435,92 @@ html[data-appearance=anime][data-theme=dark]{--bg:#25243a;--text:#f1e9f6;--muted
 
 .metric-meter:not(.warning)::-webkit-meter-optimum-value{background:var(--chart)}
 .metric-meter:not(.warning)::-moz-meter-bar{background:var(--chart)}
+
+/* Four seasons: quiet, transparent surfaces over one continuous landscape. */
+html:is([data-appearance=seasons],[data-appearance=alpine]){--bg:#dce6dd;--text:#203b35;--muted:#35554b;--quiet:#405c53;--glass:rgba(255,255,248,.10);--glass-strong:rgba(255,255,248,.19);--inset:rgba(255,255,248,.065);--input-bg:rgba(255,255,248,.10);--edge:rgba(255,255,249,.64);--line:rgba(40,72,60,.16);--accent:#376956;--accent-wash:#37695614;--track:#365f4921;--shadow:0 9px 28px -18px #284b393b,inset 0 1px 0 #fffff85e;--dialog:rgba(245,250,242,.24);--chart:#4d7e63;--focus:#2d6954;--theme-button-color:#376956;--theme-button-text:#fff}
+html:is([data-appearance=seasons],[data-appearance=alpine])[data-theme=dark]{--bg:#192927;--text:#e7f0e6;--muted:#d3e0d3;--quiet:#c4d5c5;--glass:rgba(24,45,38,.10);--glass-strong:rgba(24,45,38,.19);--inset:rgba(12,29,22,.07);--input-bg:rgba(12,29,22,.13);--edge:rgba(224,242,223,.28);--line:rgba(227,240,220,.17);--accent:#b8d8b8;--accent-wash:#b8d8b81a;--track:#b8d8b825;--shadow:0 10px 30px -18px #05150f66,inset 0 1px 0 #e0f2df2b;--dialog:rgba(19,39,33,.23);--chart:#b8d8b8;--focus:#c7e3c6;--theme-button-color:#b8d8b8;--theme-button-text:#233e30}
+:is([data-appearance=seasons],[data-appearance=alpine]) .ambient{display:none}
+.theme-background.has-season-scene{display:block;background:linear-gradient(#ccdee0,#b4c6b3)}
+.season-landscape{position:absolute;inset:0;width:100%;height:100%;filter:blur(var(--theme-blur,0px));transform:scale(1.015)}
+[data-theme=dark] .season-landscape{filter:brightness(.40) saturate(.65) blur(var(--theme-blur,0px))}
+:is([data-appearance=seasons],[data-appearance=alpine]) .glass,:is([data-appearance=seasons],[data-appearance=alpine]) .server-card{background:var(--glass);backdrop-filter:blur(6px) saturate(.96);-webkit-backdrop-filter:blur(6px) saturate(.96)}
+:is([data-appearance=seasons],[data-appearance=alpine]) .server-card:before{background:linear-gradient(130deg,#ffffff0b,transparent 48%);box-shadow:none}
+:is([data-appearance=seasons],[data-appearance=alpine]) .server-card:hover,:is([data-appearance=seasons],[data-appearance=alpine]) .server-card.is-offline{background:var(--glass)}
+:is([data-appearance=seasons],[data-appearance=alpine]) .card-footer{background:transparent}
+:is([data-appearance=seasons],[data-appearance=alpine]) .brand-mark{background:var(--glass);color:var(--accent)}
+:is([data-appearance=seasons],[data-appearance=alpine]) .node-dialog:not(.terminal-dialog){background:var(--dialog);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+:is([data-appearance=seasons],[data-appearance=alpine]) .node-dialog::backdrop{background:#253b301c;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+:is([data-appearance=seasons],[data-appearance=alpine])[data-theme=dark] .node-dialog::backdrop{background:#06161030}
+:is([data-appearance=seasons],[data-appearance=alpine]) .admin-box,:is([data-appearance=seasons],[data-appearance=alpine]) #theme-settings,:is([data-appearance=seasons],[data-appearance=alpine]) .stat-tile,:is([data-appearance=seasons],[data-appearance=alpine]) .admin-nav{background:var(--glass)}
+.theme-sample-seasons{background:linear-gradient(180deg,#d2e0da 0%,#eee7d6 48%,#a9bca3 49%,#afcfc8 74%,#b8bf9a 100%);color:#456b54;position:relative}
+.theme-sample-seasons:before,.theme-sample-seasons:after{content:"";position:absolute;bottom:-15px;left:5%;width:80px;height:90px;border-radius:48% 62% 36% 48%;background:linear-gradient(120deg,#dab9b1,#96b190 36%,#d1ae7a 65%,#dce7df);transform:rotate(-12deg);opacity:.72}
+.theme-sample-seasons:after{left:auto;right:-20px;width:90px;height:65px;transform:rotate(24deg)}
+.theme-sample-seasons .sample-window{z-index:1;background:#ffffff16;border-color:#ffffffe0;backdrop-filter:blur(3px)}
+.footer{flex-wrap:wrap;gap:12px}
+.season-controls{display:inline-flex;align-items:center;gap:9px;color:var(--muted);font-size:10px}
+.season-controls button{font-size:10px;padding:3px 8px;border:1px solid var(--line);border-radius:6px;color:inherit;background:var(--glass)}
+.season-controls button:hover{background:var(--glass-strong)}
+.season-name{min-width:1em}
+@media(forced-colors:active){.season-landscape,.season-controls{display:none!important}}
+
+/* Terminal and SFTP use the chosen site's palette; the default theme stays intact. */
+html[data-appearance=clear]{--terminal-surface:rgba(237,246,251,.42)}
+html[data-appearance=clear][data-theme=dark]{--terminal-surface:rgba(28,47,59,.50)}
+html[data-appearance=sketch]{--terminal-surface:var(--glass)}
+html[data-appearance=anime]{--terminal-surface:var(--glass)}
+html:is([data-appearance=seasons],[data-appearance=alpine]){--terminal-surface:rgba(248,250,240,.16)}
+html:is([data-appearance=seasons],[data-appearance=alpine])[data-theme=dark]{--terminal-surface:rgba(15,34,28,.16)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog{background:var(--terminal-surface);color:var(--text);border-color:var(--edge);box-shadow:var(--shadow);backdrop-filter:blur(22px) saturate(.92);-webkit-backdrop-filter:blur(22px) saturate(.92)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog :is(.terminal-workspace,.terminal-screen,.file-editor,#file-content,.terminal-main,.terminal-pane,.xterm-viewport){background:transparent!important}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog :is(.terminal-header,.terminal-quickbar,.terminal-tabs,.terminal-keybar,.terminal-search,.ssh-session-bar,.file-editor-bottom){background:var(--inset);border-color:var(--line);color:var(--muted)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog :is(.terminal-toolbar,.terminal-footer,.file-sidebar-heading,.file-editor-toolbar,.file-editor-meta,.file-tree-status,.file-transfer){border-color:var(--line);color:var(--muted)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog :is(.terminal-control,.terminal-toolbar button,.terminal-quickbar button,.terminal-keybar button,.terminal-search button,.file-navigation button,.file-editor-bottom button,.ssh-session-tab,.ssh-session-bar select,.terminal-quickbar select,.terminal-search input,#file-location-form){background:var(--glass);border-color:var(--line);color:var(--text)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog :is(.terminal-heading p,.terminal-channel,.terminal-placeholder,.terminal-placeholder h3,.terminal-placeholder .terminal-hint,.file-sidebar-heading>span,.file-sidebar-heading button,.file-tree-target,.file-expand,.file-link-mark,.file-empty,.file-load-more,.file-row-action,#file-path,#file-location-form button,.ssh-session-tab button,.ssh-session-bar>button,.terminal-tabs button){color:var(--muted);border-color:var(--line)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog :is(.terminal-mark,.terminal-placeholder-icon){color:var(--accent);background:var(--accent-wash);border-color:var(--line)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog .file-sidebar{color:var(--text);background:var(--inset);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog :is(.terminal-tabs button.active,.ssh-session-tab.active,.terminal-keybar button[aria-pressed=true]){background:var(--accent-wash);border-color:var(--accent);color:var(--text)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog .terminal-tabs button.active{box-shadow:inset 0 -2px var(--accent)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog :is(.file-tree-row:hover,.terminal-control:hover,.file-navigation button:hover,.file-editor-bottom button:hover){background:var(--glass-strong)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog .file-tree-target svg{stroke:var(--accent)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog #file-content{color:var(--text);caret-color:var(--accent);scrollbar-color:var(--quiet) transparent}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog #file-content:focus{box-shadow:inset 2px 0 var(--accent)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog .file-editor-toolbar input{color-scheme:inherit;accent-color:var(--accent)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog :is(.file-editor-bottom #file-save,.terminal-quickbar button:not(:disabled)){color:var(--theme-button-text,#fff);background:var(--theme-button-color,var(--accent));border-color:var(--accent)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog :is(.file-resizer){background:var(--line)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog :is(.file-resizer:hover,.file-resizer:focus-visible){background:var(--accent)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog :is(.file-tree-status.is-error,.file-editor-bottom .is-error,.terminal-search span){color:var(--warning)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-workspace button:focus-visible{outline-color:var(--focus)}
+[data-appearance=sketch] .terminal-dialog{border:1.4px solid var(--edge);border-radius:11px 16px 9px 14px;box-shadow:6px 7px 0 #151c1730;backdrop-filter:none;-webkit-backdrop-filter:none}
+[data-appearance=anime] .terminal-dialog{border:1.5px solid var(--edge);border-radius:20px 20px 27px 20px}
+@media(forced-colors:active){html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog{background:Canvas;color:CanvasText;backdrop-filter:none;-webkit-backdrop-filter:none}}
+
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog .file-editor-bottom p:not(.is-error){color:var(--muted)}
+html:is([data-appearance=clear],[data-appearance=sketch],[data-appearance=anime],[data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog button:disabled{opacity:.48}
+
+.season-weather,.season-particles{position:absolute;inset:0;overflow:hidden;pointer-events:none}
+.season-weather{contain:layout style}
+.season-sprite{position:absolute;top:0;width:calc(var(--flake)*1.7);height:var(--flake);border-radius:70% 20% 70% 20%;background:#dcb1b5;opacity:.55}
+.season-particles-1 .season-sprite{background:#f7f0d1;opacity:.3;width:var(--flake);height:calc(var(--flake)*.6)}
+.season-particles-2 .season-sprite{background:#b99661;opacity:.54}
+.season-particles-3 .season-sprite{width:var(--flake);height:var(--flake);background:#fff;border-radius:50%;opacity:.6}
+.season-ripple{position:absolute;height:1px;background:#fffbe15c;border-radius:50%;opacity:.24}
+[data-theme=dark] .season-weather{opacity:.52}
+html:is([data-appearance=seasons],[data-appearance=alpine]) .terminal-dialog{backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+@media(forced-colors:active){.season-weather{display:none!important}}
+
+/* Mountain lake: a restrained light veil keeps the transparent cards readable. */
+html[data-appearance=alpine]{--text:#172d30;--muted:#2c4346;--quiet:#374d50;--glass:rgba(251,253,253,.21);--glass-strong:rgba(251,253,253,.27);--dialog:rgba(243,248,247,.42);--terminal-surface:rgba(243,248,247,.38);--accent:#375e60;--theme-button-color:#375e60}
+[data-appearance=alpine] .theme-background:after{opacity:clamp(.43,var(--theme-dim),.85)}
+html[data-appearance=alpine][data-theme=dark]{--text:#e7f0ed;--muted:#d0e0db;--quiet:#bdcfc9;--glass:rgba(16,32,31,.18);--glass-strong:rgba(16,32,31,.25);--dialog:rgba(13,29,29,.34);--terminal-surface:rgba(13,29,29,.32);--accent:#bbd8cf;--theme-button-color:#bbd8cf}
+[data-appearance=alpine][data-theme=dark] .theme-background:after{opacity:var(--theme-dim)}
+.theme-sample-alpine{background:linear-gradient(#ffffff12,#ffffff12),url('/assets/alpine-spring-c2aad87f1bf0.webp') center/cover;color:#203e3e}
+.theme-sample-alpine .sample-window{background:#ffffff33;backdrop-filter:blur(2px)}
+html:is([data-appearance=seasons],[data-appearance=alpine]) :is(.sparkline:not(.warning),.detail-chart svg,.network-rate dd){color:var(--season-metric,var(--chart))}
+html:is([data-appearance=seasons],[data-appearance=alpine]) .metric-meter:not(.warning):not(.offline-meter)::-webkit-meter-optimum-value{background:var(--season-metric,var(--chart))}
+html:is([data-appearance=seasons],[data-appearance=alpine]) .metric-meter:not(.warning):not(.offline-meter)::-moz-meter-bar{background:var(--season-metric,var(--chart))}
+@media(forced-colors:active){html:is([data-appearance=seasons],[data-appearance=alpine]) :is(.sparkline:not(.warning),.detail-chart svg,.network-rate dd){color:CanvasText}}
+
+html:is([data-appearance=seasons],[data-appearance=alpine]) .server-card:not(.is-offline) :is(.cpu-value:not(.warning),.resource-value,.swap-usage:not(.swap-warning)){color:var(--season-metric,var(--chart))}
+
+[data-appearance=alpine] .season-particles-0 .season-sprite{background:#eee2b5;width:var(--flake);height:calc(var(--flake)*.65);opacity:.36}
+@media(min-width:1200px){.theme-presets{grid-template-columns:repeat(3,minmax(0,1fr))}}

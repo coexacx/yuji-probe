@@ -31,8 +31,12 @@ node build.mjs
 
 ## Agent 发布源
 
-主控从 https://github.com/coexacx/yuji-probe/releases/download/v0.7.0/ 获取 `stable.json`，先用内嵌 Ed25519 公钥验证签名，再验证精确版本、架构、文件名、长度与 SHA-256。校验失败会终止部署，不执行远端二进制。
+主控从 https://github.com/coexacx/yuji-probe/releases/download/v0.7.1/ 获取 `stable.json`，先用内嵌 Ed25519 公钥验证签名，再验证精确版本、架构、文件名、长度与 SHA-256。校验失败会终止部署，不执行远端二进制。
 
 发布下载仅允许固定仓库 HTTPS 与 GitHub 资产 CDN，最多跟随 4 次重定向。其他 HTTP 客户端仍不跟随重定向。
 
 自建发布源时，同时修改安装器和主控的下载地址、跳转白名单及版本；修改 `source/controller-rust/src/deploy.rs` 的地址，替换 `assets/release-public.txt` 的公钥，并用自己的离线私钥签署发布清单。签名私钥不得放入源码包或网站目录。普通使用者无需自己编译或签名。
+
+主题时间轴与终端调色板测试：
+
+    node --test source/tests/seasons.test.mjs

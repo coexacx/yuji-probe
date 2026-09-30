@@ -2960,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "vistart-probe-controller"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "aes-gcm",
  "axum",

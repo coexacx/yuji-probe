@@ -1,3 +1,4 @@
+import {terminalAppearance} from "/assets/terminal-appearance-97b2890d9c5e.js";
 import {createTerminalKeys} from "/assets/terminal-keys-282e84b9cd6d.js";
 import {SearchAddon} from "/assets/search-3ea90162233f.js";
 import {createFileBrowser} from "/assets/files-21e260165a29.js";
@@ -12,7 +13,7 @@ function createSession(api,root,dialog,onClose){
  function open(record){stop(true);current=record;$('#terminal-title').textContent=record.public.name;$('#terminal-target').textContent=record.username+'@'+record.ip+':'+record.port;state('未连接');hint(record.demo?'演示节点暂不支持 SSH。':record.public.online?'点击连接建立终端会话。':'Agent 未在线，请先完成部署。');connect.disabled=record.demo||!record.public.online;if(!dialog.open)dialog.showModal();connect.focus();loadCommands();}
  async function start(){if(!current||!dialog.open)return;stop(true);const run=generation;connect.disabled=true;hint('正在请求终端授权…');state('连接中');
   try{const result=await api('/api/admin/terminal-ticket','POST',{id:current.public.id});if(run!==generation||!dialog.open)return;
-   term=new Terminal({fontFamily:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:13,lineHeight:1.25,scrollback:2000,cursorBlink:true,allowProposedApi:false,disableStdin:true,theme:{background:'#121b29',foreground:'#dce6f0',cursor:'#b9dbef',selectionBackground:'#406584'}});fit=new FitAddon();term.loadAddon(fit);search=new SearchAddon();term.loadAddon(search);
+   term=new Terminal({fontFamily:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',fontSize:13,lineHeight:1.25,scrollback:2000,cursorBlink:true,allowProposedApi:false,disableStdin:true,allowTransparency:true,theme:terminalAppearance()});fit=new FitAddon();term.loadAddon(fit);search=new SearchAddon();term.loadAddon(search);
    // Block terminal-controlled links, clipboard access and window operations.
    term.parser.registerOscHandler(52,()=>true);term.parser.registerOscHandler(8,()=>true);term.parser.registerOscHandler(0,()=>true);term.parser.registerOscHandler(2,()=>true);
    placeholder.hidden=true;mount.hidden=false;term.open(mount);fit.fit();
@@ -35,8 +36,9 @@ function createSession(api,root,dialog,onClose){
  $('#terminal-paste-form').addEventListener('submit',event=>{event.preventDefault();const script=$('#terminal-paste-input').value.replace(/\r\n?/g,'\n').trimEnd();const bytes=new TextEncoder().encode(script+'\n');if(!script.trim()){return;}if(bytes.length>8192||/[\x00-\x08\x0b-\x1f\x7f]/.test(script)){$('#paste-error').textContent='命令最多 8192 字节，且不能含特殊控制字符。';return;}if(!connected||socket?.readyState!==WebSocket.OPEN){$('#paste-error').textContent='连接已断开，请重新连接。';return;}if(socket.bufferedAmount>128*1024){$('#paste-error').textContent='正在发送其他内容，请稍后重试。';return;}socket.send(bytes);closePaste();term.focus();});
  connect.addEventListener('click',start);disconnect.addEventListener('click',async()=>{if(await files.confirmDiscard())stop();});$('#terminal-close').addEventListener('click',onClose);$('#terminal-maximize').addEventListener('click',()=>{const active=dialog.classList.toggle('is-expanded');$('#terminal-maximize').setAttribute('aria-pressed',String(active));$('#terminal-maximize').textContent=active?'还原':'展开';requestAnimationFrame(()=>fit?.fit());});
  const keys=createTerminalKeys({root,getTerm:()=>term,getSearch:()=>search,send:value=>sendInput(value),paste:()=>$('#terminal-paste').click(),fit:()=>requestAnimationFrame(()=>fit?.fit())});
+ const appearanceObserver=new MutationObserver(()=>{if(term)term.options.theme=terminalAppearance();});appearanceObserver.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme','data-appearance','style']});
  const files=createFileBrowser({dialog,scope:root,send:value=>{if(!connected||socket?.readyState!==WebSocket.OPEN)throw Error('SSH 连接已断开');if(socket.bufferedAmount>128*1024)throw Error('正在发送其他内容，请稍后重试');socket.send(value);},onResize:()=>{if(term&&mount.getClientRects().length)fit?.fit();},onTerminal:()=>{if(connected)term?.focus();}});
- return {open,confirm:()=>files.confirmDiscard(),fit:()=>{if(term&&mount.getClientRects().length)fit?.fit();},deactivate:()=>keys.reset(),destroy:()=>{stop(true);keys.destroy();files.destroy();current=null;}};
+ return {open,confirm:()=>files.confirmDiscard(),fit:()=>{if(term&&mount.getClientRects().length)fit?.fit();},deactivate:()=>keys.reset(),destroy:()=>{appearanceObserver.disconnect();stop(true);keys.destroy();files.destroy();current=null;}};
 }
 
 export function createTerminalUI(api,getRecords,toast){

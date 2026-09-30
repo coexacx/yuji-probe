@@ -1,5 +1,5 @@
-import {refreshAppearance} from "/assets/appearance-e81e077acddd.js";
-import {initAdmin} from "/assets/admin-e6bd0ee7ec45.js";
+import {refreshAppearance} from "/assets/appearance-529dbbd81c25.js";
+import {initAdmin} from "/assets/admin-9a831fa2187d.js";
 import {countryByCode,normalizedCountry} from "/assets/countries-3dabb5bbec57.js";
 import {createNetworkUI} from "/assets/network-07924d16c6d9.js";
 

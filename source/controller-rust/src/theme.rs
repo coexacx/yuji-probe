@@ -207,7 +207,9 @@ fn normalize_image(value: &ThemeImage, icon: bool) -> ApiResult<ThemeImage> {
 }
 impl Theme {
     pub fn fields(&self) -> ApiResult<()> {
-        if !["default", "clear", "sketch", "anime"].contains(&self.preset.as_str()) {
+        if !["default", "clear", "sketch", "anime", "seasons", "alpine"]
+            .contains(&self.preset.as_str())
+        {
             return Err(bad("请选择可用主题"));
         }
         if !(self.accent.is_empty() || color(&self.accent, &[6])) {

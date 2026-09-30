@@ -11,11 +11,19 @@ const fit=await asset('fit',await readFile(root+'/frontend-tools/node_modules/@x
 const search=await asset('search',await readFile(root+'/frontend-tools/node_modules/@xterm/addon-search/lib/addon-search.mjs'),'js');
 const keys=await asset('terminal-keys',await readFile(root+'/src/terminal-keys.mjs'),'js');
 const billing=await asset('billing',await readFile(root+'/src/billing.mjs'),'js');
-const appearance=await asset('appearance',await readFile(root+'/src/appearance.mjs'),'js');
+let seasonsSource=await readFile(root+'/src/seasons.mjs','utf8');
+const alpine={};
+for(const name of ['spring','summer','autumn','winter']){
+ alpine[name]=await asset('alpine-'+name,await readFile(root+'/src/scenery/alpine-'+name+'.webp'),'webp');
+ seasonsSource=seasonsSource.replace('__ALPINE_'+name.toUpperCase()+'__',alpine[name]);
+}
+const seasons=await asset('seasons',seasonsSource,'js');
+const appearance=await asset('appearance',(await readFile(root+'/src/appearance.mjs','utf8')).replace("'./seasons.mjs'",JSON.stringify(seasons)),'js');
+const terminalAppearance=await asset('terminal-appearance',await readFile(root+'/src/terminal-appearance.mjs'),'js');
 const themes=await asset('themes',(await readFile(root+'/src/themes.mjs','utf8')).replace("'./appearance.mjs'",JSON.stringify(appearance)),'js');
 const anime=await asset('anime-sky',await readFile(root+'/src/anime-sky.svg'),'svg');
 const files=await asset('files',await readFile(root+'/src/files.mjs'),'js');
-const terminal=await asset('terminal',(await readFile(root+'/src/terminal.mjs','utf8')).replace("'./terminal-keys.mjs'",JSON.stringify(keys)).replace("'./addon-search.mjs'",JSON.stringify(search)).replace("'./xterm.mjs'",JSON.stringify(xterm)).replace("'./addon-fit.mjs'",JSON.stringify(fit)).replace("'./files.mjs'",JSON.stringify(files)),'js');
+const terminal=await asset('terminal',(await readFile(root+'/src/terminal.mjs','utf8')).replace("'./terminal-appearance.mjs'",JSON.stringify(terminalAppearance)).replace("'./terminal-keys.mjs'",JSON.stringify(keys)).replace("'./addon-search.mjs'",JSON.stringify(search)).replace("'./xterm.mjs'",JSON.stringify(xterm)).replace("'./addon-fit.mjs'",JSON.stringify(fit)).replace("'./files.mjs'",JSON.stringify(files)),'js');
 const qr=await asset('qrcode',await readFile(root+'/frontend-tools/node_modules/qrcode-generator/dist/qrcode.mjs'),'js');
 const authenticator=await asset('authenticator',(await readFile(root+'/src/authenticator.mjs','utf8')).replace("'./qrcode.mjs'",JSON.stringify(qr)),'js');
 let countrySource=await readFile(root+'/src/countries.mjs','utf8');
@@ -29,7 +37,7 @@ const inspector=await asset('inspector',await readFile(root+'/src/inspector.mjs'
 const operations=await asset('operations',(await readFile(root+'/src/operations.mjs','utf8')).replace("'./offsite.mjs'",JSON.stringify(offsite)),'js');
 const admin=await asset('admin',(await readFile(root+'/src/admin.mjs','utf8')).replace("'./themes.mjs'",JSON.stringify(themes)).replace("'./appearance.mjs'",JSON.stringify(appearance)).replace("'./billing.mjs'",JSON.stringify(billing)).replace("'./operations.mjs'",JSON.stringify(operations)).replace("'./inspector.mjs'",JSON.stringify(inspector)).replace("'./terminal.mjs'",JSON.stringify(terminal)).replace("'./authenticator.mjs'",JSON.stringify(authenticator)).replace("'./countries.mjs'",JSON.stringify(countries)).replace("'./renewals.mjs'",JSON.stringify(renewals)),'js');
 const app=await asset('app',(await readFile(root+'/src/app.mjs','utf8')).replace("'./appearance.mjs'",JSON.stringify(appearance)).replace("'./admin.mjs'",JSON.stringify(admin)).replace("'./countries.mjs'",JSON.stringify(countries)).replace("'./network.mjs'",JSON.stringify(network)),'js');
-const style=await asset('style',(await readFile(root+'/frontend-tools/node_modules/@xterm/xterm/css/xterm.css','utf8'))+'\n'+(await readFile(root+'/src/style.css','utf8'))+'\n'+(await readFile(root+'/src/appearance.css','utf8')).replaceAll('__ANIME_BG__',anime),'css');
+const style=await asset('style',(await readFile(root+'/frontend-tools/node_modules/@xterm/xterm/css/xterm.css','utf8'))+'\n'+(await readFile(root+'/src/style.css','utf8'))+'\n'+(await readFile(root+'/src/appearance.css','utf8')).replaceAll('__ANIME_BG__',anime).replaceAll('__ALPINE_BG__',alpine.spring),'css');
 const html=(await readFile(root+'/src/index.html','utf8')).replace('__STYLE__',style).replace('__SCRIPT__',app);
 if(html.includes('__STYLE__')||html.includes('__SCRIPT__'))throw Error('Unresolved build placeholders');
 await writeFile(stage+'/index.html',html);

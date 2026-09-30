@@ -1,6 +1,15 @@
-const presets=new Set(['default','clear','sketch','anime']);
+const presets=new Set(['default','clear','sketch','anime','seasons','alpine']);
 let epoch=0,saved=null,shown=null,inflight=null,previewing=false,urls={background:null,favicon:null},imageKeys={},brandOriginal=null;
 const root=document.documentElement;
+let scenery=null,sceneryEpoch=0,sceneryKind='';
+function sceneryFor(preset){
+ const kind=['seasons','alpine'].includes(preset)?preset:'',epoch=++sceneryEpoch;
+ layer.classList.toggle('has-season-scene',!!kind);
+ if(kind!==sceneryKind){scenery?.destroy();scenery=null;sceneryKind=kind;}
+ if(kind&&!scenery)import("/assets/seasons-3025c22f0af5.js").then(({mountSeasons})=>{
+  if(epoch===sceneryEpoch&&root.dataset.appearance===kind&&!scenery)scenery=mountSeasons(layer,{kind});
+ }).catch(()=>{});
+}
 const style=document.createElement('style');style.id='appearance-overrides';document.head.append(style);
 const layer=document.createElement('div');layer.className='theme-background';layer.setAttribute('aria-hidden','true');document.body.prepend(layer);
 function blobURL(value,key){
@@ -25,7 +34,8 @@ function colors(){
 function apply(doc){
  if(!doc?.theme)return;shown=doc;const t=doc.theme;
  root.dataset.appearance=presets.has(t.preset)?t.preset:'default';
- const background=blobURL(t.background,'background');root.classList.toggle('has-theme-background',!!background);
+ sceneryFor(t.preset);
+ const background=blobURL(['seasons','alpine'].includes(t.preset)?null:t.background,'background');root.classList.toggle('has-theme-background',!!background);
  layer.style.setProperty('--theme-image',background?'url("'+background+'")':'none');layer.style.setProperty('--theme-dim',String(Math.min(85,Math.max(0,t.backgroundDim??20))/100));layer.style.setProperty('--theme-blur',Math.min(24,Math.max(0,t.backgroundBlur??0))+'px');
  const favicon=blobURL(t.favicon,'favicon'),link=document.querySelector('link[rel=icon]');link.href=favicon||'/favicon.svg';link.type=favicon?t.favicon.mime:'image/svg+xml';
  const mark=document.querySelector('.brand-mark');if(!brandOriginal)brandOriginal=mark.firstElementChild.cloneNode(true);

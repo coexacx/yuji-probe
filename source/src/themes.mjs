@@ -1,7 +1,7 @@
 import {acceptAppearance,previewAppearance,endAppearancePreview} from './appearance.mjs';
-const choices=[['default','默认','保留当前液态玻璃外观'],['clear','纯透明液态玻璃','清透边缘与轻盈层次'],['sketch','简笔画','纸面、线条与手绘边框'],['anime','纯二次元','晴空、樱色与插画背景']];
+const choices=[['default','默认','保留当前液态玻璃外观'],['clear','纯透明液态玻璃','清透边缘与轻盈层次'],['sketch','简笔画','纸面、线条与手绘边框'],['anime','纯二次元','晴空、樱色与插画背景'],['seasons','四季','水彩山湖 · 每季 1 分钟'],['alpine','山水四季','写实山湖 · 每季 1 分钟']];
 const empty=()=>({revision:'',preset:'default',accent:'',background:null,favicon:null,backgroundDim:20,backgroundBlur:0,brandIcon:true,customCss:''});
-const defaultColors={default:'#226c61',clear:'#326a83',sketch:'#5a624d',anime:'#a65077'};
+const defaultColors={default:'#226c61',clear:'#326a83',sketch:'#5a624d',anime:'#a65077',seasons:'#376956',alpine:'#375e60'};
 async function convert(file,icon){
  if(!file||!['image/png','image/jpeg','image/webp'].includes(file.type))throw Error('请选择 PNG、JPG 或 WebP 图片');
  if(file.size>8*1024*1024)throw Error('图片最大 8 MiB');
@@ -28,7 +28,7 @@ export async function showThemes({panel,el,api,heading,toast}){
    const label=el('label','theme-choice'),radio=el('input');radio.type='radio';radio.name='preset';radio.value=id;radio.checked=draft.preset===id;
    const sample=el('span','theme-sample theme-sample-'+id);sample.setAttribute('aria-hidden','true');const mock=el('span','sample-window');mock.append(el('span','sample-dot'),el('span','sample-line'),el('span','sample-bars'));sample.append(mock);
    const title=el('span','theme-choice-title',name),note=el('span','theme-choice-note',description);label.append(radio,sample,title,note);presets.append(label);
-   radio.onchange=()=>{draft.preset=id;if(!draft.accent){color.value=defaultColors[id];colorText.value=color.value;}};
+   radio.onchange=()=>{draft.preset=id;backgroundMode();if(!draft.accent){color.value=defaultColors[id];colorText.value=color.value;}};
   }
   form.append(presets);
   const custom=el('div','theme-custom'),left=el('div','theme-fields'),right=el('div','theme-fields');
@@ -44,7 +44,9 @@ export async function showThemes({panel,el,api,heading,toast}){
    input.onchange=async()=>{const file=input.files[0];if(!file)return;const run=++conversion;error.textContent='';setBusy(true);status.textContent='正在处理…';try{const value=await convert(file,icon);if(!alive()||run!==conversion)return;draft[key]=value;draw();}catch(e){if(alive()){error.textContent=e.message;draw();}}finally{input.value='';if(alive()&&run===conversion)setBusy(false);}};
    remove.onclick=()=>{draft[key]=null;draw();};const actions=el('div','theme-media-actions');actions.append(status,remove);area.append(label,sample,actions);draw();return area;
   }
-  left.append(mediaField('background','背景图',false));
+  const backgroundField=mediaField('background','背景图',false),seasonNote=el('p','form-notice','春、夏、秋、冬各 1 分钟，风景渐变衔接。页面底部可暂停动画。');
+  function backgroundMode(){backgroundField.hidden=['seasons','alpine'].includes(draft.preset);seasonNote.hidden=!backgroundField.hidden;}
+  left.append(backgroundField,seasonNote);backgroundMode();
   function range(labelText,name,min,max,suffix){const label=el('label','form-field'),header=el('span','theme-range-label'),output=el('output','',draft[name]+suffix),input=el('input');input.type='range';input.name=name;input.min=min;input.max=max;input.value=draft[name];input.oninput=()=>{draft[name]=Number(input.value);output.textContent=input.value+suffix;};header.append(document.createTextNode(labelText),output);label.append(header,input);return label;}
   const ranges=el('div','form-columns');ranges.append(range('背景遮罩','backgroundDim',0,85,'%'),range('背景模糊','backgroundBlur',0,24,' px'));left.append(ranges);
   right.append(mediaField('favicon','站点图标',true));const brand=el('label','check-field'),brandInput=el('input');brandInput.type='checkbox';brandInput.name='brandIcon';brandInput.checked=draft.brandIcon;brandInput.onchange=()=>draft.brandIcon=brandInput.checked;brand.append(brandInput,document.createTextNode('同时用于左上角站点标识'));right.append(brand,el('p','form-footnote','PNG、JPG、WebP 图片，上传时自动压缩。'));
