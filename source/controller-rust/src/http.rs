@@ -61,7 +61,12 @@ async fn api(
             let mut inner = app.lock();
             app.guard(&mut inner, &c, true, c.method != "GET")?;
         }
-        let bytes = timeout(Duration::from_secs(10), to_bytes(req.into_body(), 16384))
+        let max_body = if c.path == "/api/admin/ops/restore" {
+            24 * 1024 * 1024
+        } else {
+            16384
+        };
+        let bytes = timeout(Duration::from_secs(10), to_bytes(req.into_body(), max_body))
             .await
             .map_err(|_| ApiError::new(408, "请求超时"))?
             .map_err(|_| ApiError::new(413, "请求内容过大"))?
@@ -71,6 +76,12 @@ async fn api(
         }
         if c.path == "/api/admin/password" && c.method == "POST" {
             return auth::password(app.clone(), c, bytes).await;
+        }
+        if c.path == "/api/admin/reauth" {
+            return auth::elevate(app.clone(), c, bytes).await;
+        }
+        if c.path.starts_with("/api/admin/ops/") || c.path == "/api/migrate" {
+            return crate::operations::api(app.clone(), c, bytes).await;
         }
         if c.path.starts_with("/api/admin/mfa/") {
             return auth::mfa(app.clone(), c, bytes).await;
@@ -111,16 +122,30 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
             if !i.data.site.public && !admin {
                 return Err(ApiError::new(403, "此看板暂未公开"));
             }
-            let list: Vec<_> = i
-                .data
-                .nodes
-                .iter()
-                .filter(|n| n.visible)
-                .map(|n| &n.public)
-                .collect();
-            Ok(ApiReply::ok(
-                json!({"nodes":list,"site":i.data.site,"preview":i.data.preview}),
-            ))
+            if i.cache.as_ref().is_none_or(|(at, _)| *at != now()) {
+                #[derive(serde::Serialize)]
+                struct Board<'a> {
+                    nodes: Vec<&'a crate::model::PublicNode>,
+                    site: &'a crate::model::Site,
+                    preview: bool,
+                }
+                let board = Board {
+                    nodes: i
+                        .data
+                        .nodes
+                        .iter()
+                        .filter(|n| n.visible && !n.removing)
+                        .map(|n| &n.public)
+                        .collect(),
+                    site: &i.data.site,
+                    preview: i.data.preview,
+                };
+                let raw = serde_json::to_vec(&board).map_err(|_| ApiError::internal())?;
+                i.cache = Some((now(), Arc::from(raw)));
+            }
+            let mut reply = ApiReply::ok(serde_json::Value::Null);
+            reply.raw = Some(i.cache.as_ref().unwrap().1.clone());
+            Ok(reply)
         }
         ("/api/admin/nodes", "GET") => {
             app.guard(&mut i, c, true, false)?;
@@ -202,6 +227,7 @@ pub async fn serve(app: App, listen: SocketAddr) -> Result<(), &'static str> {
     let slots = Arc::new(Semaphore::new(256));
     let mut tasks = JoinSet::new();
     telegram::start(&app);
+    crate::operations::start(&app);
     eprintln!("Rust probe controller started on loopback");
     loop {
         tokio::select! {_=app.0.stop.cancelled()=>break,Some(_)=tasks.join_next()=>{},incoming=listener.accept()=>{let(socket,remote)=incoming.map_err(|_|"listener failed")?;let Ok(slot)=slots.clone().try_acquire_owned()else{drop(socket);continue};let router=router.clone();let stop=app.0.stop.clone();tasks.spawn(async move{let _slot=slot;let _=socket.set_nodelay(true);let service=service_fn(move|req:Request<hyper::body::Incoming>|{let router=router.clone();async move{let mut req=req.map(Body::new);req.extensions_mut().insert(ConnectInfo(remote));let size=req.headers().iter().map(|(k,v)|k.as_str().len()+v.len()+4).sum::<usize>();if size>8192||req.uri().to_string().len()>2048{return Ok::<_,Infallible>(ApiError::new(431,"请求头过大").into_response())}router.oneshot(req).await}});let mut builder=hyper::server::conn::http1::Builder::new();builder.timer(TokioTimer::new()).header_read_timeout(Duration::from_secs(5)).max_headers(48).max_buf_size(16384).keep_alive(false);let conn=builder.serve_connection(TokioIo::new(socket),service).with_upgrades();tokio::select!{_=stop.cancelled()=>{},_=conn=>{}}});}}

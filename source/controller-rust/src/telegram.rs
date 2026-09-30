@@ -190,6 +190,11 @@ fn member_current(i: &Inner, m: &RenewalMember) -> bool {
         })
 }
 fn event_current(i: &Inner, e: &TelegramEvent) -> bool {
+    if ["online", "offline"].contains(&e.kind.as_str()) {
+        return i.data.nodes.iter().any(|n| {
+            n.public.id == e.node_id && !n.removing && n.policy.maintenance_until <= now()
+        });
+    }
     e.kind != "renewal"
         || (!e.renewal_nodes.is_empty() && e.renewal_nodes.iter().all(|m| member_current(i, m)))
 }
@@ -211,7 +216,9 @@ pub fn invalidate(app: &App, i: &mut Inner) {
     let mut changed = false;
     next.queue.retain_mut(|e| {
         if e.kind != "renewal" {
-            return true;
+            let keep = event_current(i, e);
+            changed |= !keep;
+            return keep;
         }
         let old = e.renewal_nodes.len();
         e.renewal_nodes.retain(|m| member_current(i, m));
@@ -247,10 +254,22 @@ fn tick(app: &App, i: &mut Inner) {
     let mut changed = false;
     let mut present = std::collections::HashSet::new();
     for node in &i.data.nodes {
-        if node.demo {
+        if node.demo || node.removing {
             continue;
         }
         let id = &node.public.id;
+        if node.policy.maintenance_until > t {
+            next.nodes.insert(
+                id.clone(),
+                TelegramNodeState {
+                    online: node.public.online,
+                    offline_since: 0,
+                },
+            );
+            present.insert(id.clone());
+            changed = true;
+            continue;
+        }
         present.insert(id.clone());
         let known = next.nodes.contains_key(id);
         let mut state = next.nodes.get(id).cloned().unwrap_or_default();
@@ -286,6 +305,7 @@ fn tick(app: &App, i: &mut Inner) {
                     name: node.public.name.clone(),
                     site: i.data.site.name.clone(),
                     kind: kind.into(),
+                    next_attempt: t + 5,
                     at: t,
                     ..Default::default()
                 });
@@ -364,6 +384,18 @@ pub fn text(e: &TelegramEvent) -> String {
         .single()
         .map(|v| v.format("%Y-%m-%d %H:%M:%S").to_string())
         .unwrap_or_default();
+    if ["resource", "security"].contains(&e.kind.as_str()) {
+        return format!(
+            "{} · {}\n{}\n时间：{when}（UTC+8）",
+            e.site,
+            if e.kind == "resource" {
+                "资源提醒"
+            } else {
+                "账户安全"
+            },
+            e.name
+        );
+    }
     if e.kind == "test" {
         return format!(
             "{} · Telegram 测试通知\n通知服务已连接。\n时间：{when}（UTC+8）",
@@ -719,4 +751,26 @@ mod queue_tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
     use chrono::Utc;
+}
+
+pub fn queue_notice(app: &App, i: &mut Inner, message: &str, kind: &str) {
+    if !i.telegram.config.enabled || i.telegram.config.token.is_empty() {
+        return;
+    }
+    let mut next = i.telegram.clone();
+    if next.queue.len() >= LIMIT {
+        next.dropped += 1;
+        let _ = save(app, i, next);
+        return;
+    }
+    next.queue.push(TelegramEvent {
+        id: token()[..24].into(),
+        site: i.data.site.name.clone(),
+        kind: kind.into(),
+        name: message.chars().take(3000).collect(),
+        at: now(),
+        next_attempt: now() + 5,
+        ..Default::default()
+    });
+    let _ = save(app, i, next);
 }

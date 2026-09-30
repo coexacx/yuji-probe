@@ -45,7 +45,13 @@ pub fn verify_totp(secret: &str, code: &str, at: i64, last: i64) -> Option<i64> 
         .into_iter()
         .find(|&step| step > last && totp(secret, step).is_some_and(|value| constant(&value, code)))
 }
-fn reserve(app: &App, i: &mut Inner, key: &str, limit: u32, global: bool) -> ApiResult<()> {
+pub(crate) fn reserve(
+    app: &App,
+    i: &mut Inner,
+    key: &str,
+    limit: u32,
+    global: bool,
+) -> ApiResult<()> {
     let t = now();
     i.limits.sources.retain(|_, a| a.until.timestamp() > t);
     if i.limits.sources.len() > 8192 {
@@ -73,7 +79,7 @@ fn reserve(app: &App, i: &mut Inner, key: &str, limit: u32, global: bool) -> Api
     }
     app.persist_limits(i)
 }
-async fn password_matches(hash: String, password: String) -> bool {
+pub(crate) async fn password_matches(hash: String, password: String) -> bool {
     if password.len() > 72 {
         return false;
     }
@@ -81,7 +87,7 @@ async fn password_matches(hash: String, password: String) -> bool {
         .await
         .unwrap_or(false)
 }
-fn save_auth(app: &App, i: &mut Inner, auth: Auth) -> ApiResult<()> {
+pub(crate) fn save_auth(app: &App, i: &mut Inner, auth: Auth) -> ApiResult<()> {
     atomic_json(&app.0.dir.join("auth.json"), &auth).map_err(|_| ApiError::internal())?;
     i.auth = auth;
     Ok(())
@@ -89,6 +95,28 @@ fn save_auth(app: &App, i: &mut Inner, auth: Auth) -> ApiResult<()> {
 fn login_mfa(app: &App, i: &mut Inner, code: &str) -> bool {
     if i.auth.mfa.is_empty() {
         return true;
+    }
+    if let Some(digest) = recovery_digest(code) {
+        if let Some(index) = i.auth.recovery.iter().position(|v| constant(v, &digest)) {
+            let mut auth = i.auth.clone();
+            auth.recovery.remove(index);
+            auth.version = token();
+            if save_auth(app, i, auth).is_err() {
+                return false;
+            }
+            let ids: Vec<_> = i
+                .sessions
+                .values()
+                .filter(|s| s.auth)
+                .map(|s| s.id.clone())
+                .collect();
+            for id in ids {
+                i.revoke(&id);
+            }
+            app.record(i, "recovery_used", "一次性恢复码");
+            return true;
+        }
+        return false;
     }
     let Ok(raw) = app.unseal("admin:mfa", &i.auth.mfa) else {
         return false;
@@ -103,7 +131,7 @@ fn login_mfa(app: &App, i: &mut Inner, code: &str) -> bool {
     auth.mfa_last = counter;
     save_auth(app, i, auth).is_ok()
 }
-fn invalidate(i: &mut Inner) {
+pub(crate) fn invalidate(i: &mut Inner) {
     let ids: Vec<_> = i.sessions.keys().cloned().collect();
     for id in ids {
         i.revoke(&id);
@@ -143,8 +171,17 @@ pub async fn login(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
     i.limits.global = Attempt::default();
     app.persist_limits(&mut i)?;
     let x = i.new_session(&x.id, true)?;
+    if let Some(s) = i.sessions.get_mut(&x.id) {
+        s.source = c.ip.clone();
+        s.device = c.header("User-Agent").chars().take(200).collect();
+        s.elevated = now();
+    }
     let name = i.auth.username.clone();
     app.record(&mut i, "login", &name);
+    if let Some(a) = i.audit.last_mut() {
+        a.source = c.ip.clone();
+    }
+    crate::operations::notify_login(&app, &mut i, &c.ip);
     Ok(ApiReply::session(i.info(&x), &x.id))
 }
 pub async fn password(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
@@ -231,6 +268,7 @@ pub async fn mfa(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
         return Ok(ApiReply::ok(json!({"secret":secret})));
     }
     let mut auth = i.auth.clone();
+    let mut recovery = Vec::new();
     if action == "enable" {
         if !auth.mfa.is_empty() || x.mfa_pending.is_empty() || now() > x.mfa_expires {
             return Err(ApiError::new(400, "绑定已过期，请重新开始"));
@@ -241,6 +279,7 @@ pub async fn mfa(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
             .seal("admin:mfa", x.mfa_pending.as_bytes())
             .map_err(|_| ApiError::internal())?;
         auth.mfa_last = counter;
+        recovery = new_recovery(&mut auth);
     } else {
         if auth.mfa.is_empty() {
             return Err(ApiError::new(409, "二步验证尚未启用"));
@@ -249,9 +288,13 @@ pub async fn mfa(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
             .unseal("admin:mfa", &auth.mfa)
             .map_err(|_| ApiError::internal())?;
         let secret = std::str::from_utf8(&raw).map_err(|_| ApiError::internal())?;
-        verify_totp(secret, &v.code, now(), auth.mfa_last)
-            .ok_or_else(|| ApiError::new(400, "当前密码或验证码不正确"))?;
+        let recovery = recovery_digest(&v.code)
+            .is_some_and(|code| auth.recovery.iter().any(|v| constant(v, &code)));
+        if !recovery && verify_totp(secret, &v.code, now(), auth.mfa_last).is_none() {
+            return Err(ApiError::new(400, "当前密码或验证码不正确"));
+        }
         auth.mfa.clear();
+        auth.recovery.clear();
         auth.mfa_last = 0;
     }
     auth.version = token();
@@ -262,8 +305,98 @@ pub async fn mfa(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
     let x = i.new_session(&x.id, true)?;
     let name = i.auth.username.clone();
     app.record(&mut i, &format!("mfa_{action}"), &name);
-    Ok(ApiReply::session(i.info(&x), &x.id))
+    let mut info = i.info(&x);
+    info["recoveryCodes"] = json!(recovery);
+    Ok(ApiReply::session(info, &x.id))
 }
+
+pub fn recovery_digest(code: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let code = code.replace('-', "").to_ascii_lowercase();
+    if code.len() != 32 || !code.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(hex::encode(Sha256::digest(
+        format!("yuji-recovery-v1:{code}").as_bytes(),
+    )))
+}
+pub fn new_recovery(auth: &mut Auth) -> Vec<String> {
+    let codes: Vec<String> = (0..10)
+        .map(|_| {
+            let raw = token()[..32].to_string();
+            raw.as_bytes()
+                .chunks(8)
+                .map(|b| std::str::from_utf8(b).unwrap())
+                .collect::<Vec<_>>()
+                .join("-")
+        })
+        .collect();
+    auth.recovery = codes.iter().filter_map(|v| recovery_digest(v)).collect();
+    codes
+}
+pub async fn elevate(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
+    let v: Mfa = decode(&body)?;
+    let (hash, version) = {
+        let mut i = app.lock();
+        app.guard(&mut i, &c, true, true)?;
+        reserve(&app, &mut i, "elevate:account", 5, false)?;
+        (i.auth.hash.clone(), i.auth.version.clone())
+    };
+    let _slot = app
+        .0
+        .login_slots
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| ApiError::rate("请稍后重试", 2))?;
+    if !password_matches(hash, v.password).await {
+        return Err(ApiError::new(403, "密码或动态码不正确"));
+    }
+    let mut i = app.lock();
+    app.guard(&mut i, &c, true, true)?;
+    if i.auth.version != version {
+        return Err(ApiError::new(409, "账户已变化，请重新登录"));
+    }
+    if !i.auth.mfa.is_empty() {
+        let raw = app
+            .unseal("admin:mfa", &i.auth.mfa)
+            .map_err(|_| ApiError::internal())?;
+        let secret = std::str::from_utf8(&raw).map_err(|_| ApiError::internal())?;
+        let mut auth = i.auth.clone();
+        if let Some(index) = recovery_digest(&v.code).and_then(|digest| {
+            auth.recovery
+                .iter()
+                .position(|code| constant(code, &digest))
+        }) {
+            auth.recovery.remove(index);
+            app.record(&mut i, "recovery_used", "敏感操作身份验证");
+        } else {
+            auth.mfa_last = verify_totp(secret, &v.code, now(), auth.mfa_last)
+                .ok_or_else(|| ApiError::new(403, "密码或动态码不正确"))?;
+        }
+        save_auth(&app, &mut i, auth)?;
+    }
+    if let Some(s) = i.sessions.get_mut(&c.sid) {
+        s.elevated = now();
+    }
+    i.limits.sources.remove("elevate:account");
+    app.persist_limits(&mut i)?;
+    app.record(&mut i, "reauthenticated", &c.ip);
+    Ok(ApiReply::ok(json!({"ok":true,"expires":now()+300})))
+}
+pub fn require_elevated(i: &Inner, c: &Context) -> ApiResult<()> {
+    if i.sessions
+        .get(&c.sid)
+        .is_some_and(|s| s.auth && now() - s.elevated < 300)
+    {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            428,
+            "请先验证当前密码与动态码，有效期为 5 分钟",
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -76,6 +76,7 @@ pub struct ApiReply {
     pub value: Value,
     pub status: u16,
     pub cookie: Option<String>,
+    pub raw: Option<std::sync::Arc<[u8]>>,
 }
 impl ApiReply {
     pub fn ok(value: Value) -> Self {
@@ -83,6 +84,7 @@ impl ApiReply {
             value,
             status: 200,
             cookie: None,
+            raw: None,
         }
     }
     pub fn accepted(value: Value) -> Self {
@@ -90,12 +92,14 @@ impl ApiReply {
             value,
             status: 202,
             cookie: None,
+            raw: None,
         }
     }
     pub fn session(value: Value, id: &str) -> Self {
         Self {
             value,
             status: 200,
+            raw: None,
             cookie: Some(format!(
                 "{COOKIE}={id}; Path=/; Max-Age=28800; Secure; HttpOnly; SameSite=Strict"
             )),
@@ -104,7 +108,16 @@ impl ApiReply {
 }
 impl IntoResponse for ApiReply {
     fn into_response(self) -> Response {
-        let mut r = (StatusCode::from_u16(self.status).unwrap(), Json(self.value)).into_response();
+        let mut r = if let Some(raw) = self.raw {
+            (
+                StatusCode::from_u16(self.status).unwrap(),
+                [("Content-Type", "application/json")],
+                axum::body::Bytes::from_owner(raw),
+            )
+                .into_response()
+        } else {
+            (StatusCode::from_u16(self.status).unwrap(), Json(self.value)).into_response()
+        };
         if let Some(c) = self.cookie {
             r.headers_mut()
                 .insert("Set-Cookie", HeaderValue::from_str(&c).unwrap());
@@ -286,6 +299,10 @@ pub struct Session {
     pub version: String,
     pub created: i64,
     pub seen: i64,
+    pub source: String,
+    pub device: String,
+    pub handle: String,
+    pub elevated: i64,
     pub mfa_pending: String,
     pub mfa_expires: i64,
 }
@@ -325,6 +342,7 @@ pub struct Shared {
     pub php_gateway: bool,
     pub master: Zeroizing<Vec<u8>>,
     pub inner: Mutex<Inner>,
+    pub history_io: Mutex<u64>,
     pub login_slots: Arc<Semaphore>,
     pub deploy_slots: Arc<Semaphore>,
     pub pending_terminals: Arc<Semaphore>,
@@ -335,6 +353,8 @@ pub struct Shared {
 pub struct Inner {
     pub auth: Auth,
     pub data: Data,
+    pub cache: Option<(i64, std::sync::Arc<[u8]>)>,
+    pub ops: crate::operations::State,
     pub sessions: HashMap<String, Session>,
     pub limits: LoginLimits,
     pub requests: HashMap<String, Attempt>,
@@ -359,6 +379,7 @@ impl App {
         self.0.inner.lock().expect("state lock poisoned")
     }
     pub fn new(dir: PathBuf, origin: String, php_gateway: bool) -> Result<Self, &'static str> {
+        crate::backup::complete_restore(&dir)?;
         let auth: Auth =
             read_json(&dir.join("auth.json")).map_err(|_| "authentication state unavailable")?;
         let mut data: Data =
@@ -429,6 +450,8 @@ impl App {
             .build()
             .map_err(|_| "HTTPS client unavailable")?;
         let inner = Inner {
+            cache: None,
+            ops: crate::operations::load(&dir)?,
             auth,
             data,
             sessions: HashMap::new(),
@@ -460,6 +483,7 @@ impl App {
             php_gateway,
             master: Zeroizing::new(master),
             inner: Mutex::new(inner),
+            history_io: Mutex::new(0),
             login_slots: Arc::new(Semaphore::new(2)),
             deploy_slots: Arc::new(Semaphore::new(2)),
             pending_terminals: Arc::new(Semaphore::new(8)),
@@ -525,12 +549,19 @@ impl App {
     }
     pub fn record(&self, i: &mut Inner, action: &str, subject: &str) {
         i.audit.push(Audit {
+            source: String::new(),
+            result: if action.ends_with("failed") {
+                "failed"
+            } else {
+                "ok"
+            }
+            .into(),
             at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             action: action.into(),
             subject: subject.into(),
         });
-        if i.audit.len() > 200 {
-            i.audit.drain(..i.audit.len() - 200);
+        if i.audit.len() > 2000 {
+            i.audit.drain(..i.audit.len() - 2000);
         }
         if atomic_json(&self.0.dir.join("audit.json"), &i.audit).is_err() {
             eprintln!("Audit persistence unavailable");
@@ -539,6 +570,7 @@ impl App {
     pub fn save_data(&self, i: &mut Inner, data: Data) -> ApiResult<()> {
         atomic_json(&self.0.dir.join("nodes.json"), &data).map_err(|_| ApiError::internal())?;
         i.data = data;
+        i.cache = None;
         Ok(())
     }
     pub fn persist_limits(&self, i: &mut Inner) -> ApiResult<()> {
@@ -590,6 +622,7 @@ impl Inner {
         Some(x.clone())
     }
     pub fn new_session(&mut self, old: &str, authenticated: bool) -> ApiResult<Session> {
+        let previous = self.sessions.get(old).cloned();
         self.revoke(old);
         let t = now();
         let stale: Vec<_> = self
@@ -621,6 +654,16 @@ impl Inner {
             version: self.auth.version.clone(),
             created: t,
             seen: t,
+            source: previous
+                .as_ref()
+                .map(|s| s.source.clone())
+                .unwrap_or_default(),
+            device: previous
+                .as_ref()
+                .map(|s| s.device.clone())
+                .unwrap_or_default(),
+            handle: token(),
+            elevated: 0,
             mfa_pending: String::new(),
             mfa_expires: 0,
         };
@@ -634,6 +677,7 @@ impl Inner {
             v["username"] = json!(self.auth.username);
             v["role"] = json!("admin");
             v["mfaEnabled"] = json!(!self.auth.mfa.is_empty());
+            v["recoveryRemaining"] = json!(self.auth.recovery.len());
         }
         v
     }

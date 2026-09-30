@@ -1,0 +1,1 @@
+{"ok": true, "checks": ["signed-real-full-package", "same-origin-preserved", "admin-hash-preserved", "node-credentials-preserved", "custom-php-pool-preserved", "healthy-main-and-live-agent", "real-manual-rollback-restores-previous-binary-and-state"]}

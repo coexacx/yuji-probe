@@ -269,3 +269,56 @@ pub fn create_key(comment: &str) -> Result<(Zeroizing<Vec<u8>>, String), &'stati
         .map_err(|_| "SSH key serialization failed")?;
     Ok((Zeroizing::new(private.as_bytes().to_vec()), public))
 }
+
+trait RecoveryStream: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> RecoveryStream for T {}
+pub async fn recovery_client(
+    app: &App,
+    node: &crate::model::Node,
+    secret: &NodeSecret,
+) -> Result<Arc<Client>, &'static str> {
+    let raw = app.unseal(
+        &format!("{}:recovery", node.public.id),
+        &secret.recovery_key,
+    )?;
+    let key = PrivateKey::from_openssh(raw.as_slice()).map_err(|_| "recovery identity invalid")?;
+    if key.algorithm() != Algorithm::Ed25519 {
+        return Err("unsupported recovery identity");
+    }
+    let address = std::net::SocketAddr::new(
+        node.ip.parse().map_err(|_| "node address invalid")?,
+        u16::try_from(node.port).map_err(|_| "node port invalid")?,
+    );
+    let stream: Box<dyn RecoveryStream> = match timeout(
+        Duration::from_secs(8),
+        tokio::net::TcpStream::connect(address),
+    )
+    .await
+    {
+        Ok(Ok(s)) => Box::new(s),
+        _ => {
+            let link = app
+                .lock()
+                .agents
+                .get(&node.public.id)
+                .cloned()
+                .ok_or("SSH unreachable")?;
+            Box::new(link.open().await?)
+        }
+    };
+    let mut client = connect(stream, Some(&secret.host_key), Arc::new(Mutex::new(None))).await?;
+    let ok = timeout(
+        Duration::from_secs(10),
+        client.authenticate_publickey(
+            &node.username,
+            PrivateKeyWithHashAlg::new(Arc::new(key), None),
+        ),
+    )
+    .await
+    .map_err(|_| "recovery authentication timeout")?
+    .map_err(|_| "recovery authentication failed")?;
+    if !ok.success() {
+        return Err("recovery key rejected");
+    }
+    Ok(Arc::new(client))
+}

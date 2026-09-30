@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "checks": [
+    "public-live-metrics-and-private-data-boundary",
+    "real-browser-SSH-and-SFTP-edit-without-backup",
+    "readonly-file-policy-rejects-raw-WebSocket-save",
+    "monitor-only-policy-revokes-existing-connection",
+    "session-revocation-closes-associated-SSH-and-files",
+    "historical-data-ranges-and-real-traffic",
+    "zero-browser-errors"
+  ]
+}

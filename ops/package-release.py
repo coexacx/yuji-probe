@@ -7,9 +7,11 @@ from cryptography.hazmat.primitives import serialization
 parser=argparse.ArgumentParser()
 parser.add_argument("--signing-key",type=pathlib.Path,required=True)
 parser.add_argument("--output",type=pathlib.Path,required=True)
+parser.add_argument("--agent-amd64",type=pathlib.Path,required=True)
+parser.add_argument("--agent-arm64",type=pathlib.Path,required=True)
 args=parser.parse_args()
 root=pathlib.Path(__file__).resolve().parent.parent
-version="0.4.1"
+version="0.5.0"
 out=args.output.resolve()
 if out==root or root in out.parents: raise SystemExit("Release output must be outside the source tree")
 keypath=args.signing_key.resolve()
@@ -26,6 +28,7 @@ for section in ["app","bin","docs","ops","public","source","THIRD-PARTY-NOTICES"
     for p in sorted((root/section).rglob("*")):
         rel=p.relative_to(root)
         if any(x in (".git","target","node_modules","__pycache__") for x in rel.parts): continue
+        if rel.parts[:2] in (("source","state"),("source","public")): continue
         if p.is_symlink(): raise SystemExit("Package cannot include symbolic links")
         if p.is_file():
             if p.suffix==".log": continue
@@ -66,6 +69,19 @@ for arch in ["amd64","arm64"]:
     path.chmod(0o755)
     controllers[arch]={"name":name,"size":path.stat().st_size,"sha256":hashlib.sha256(path.read_bytes()).hexdigest()}
 sign("controller-stable.json",version,controllers)
+agents={}
+for arch in ["amd64","arm64"]:
+    path=getattr(args,"agent_"+arch).resolve()
+    raw=path.read_bytes()
+    expected_machine=62 if arch=="amd64" else 183
+    if raw[:4]!=b"\x7fELF" or int.from_bytes(raw[18:20],"little")!=expected_machine:
+        raise SystemExit("Agent is not the expected ELF architecture")
+    name=f"vistart-probe-agent-0.2.0-linux-{arch}"
+    shutil.copyfile(path,out/name)
+    (out/name).chmod(0o755)
+    agents[arch]={"name":name,"size":len(raw),"sha256":hashlib.sha256(raw).hexdigest()}
+sign("stable.json","0.2.0",agents)
+
 (out/"release-public.txt").write_text(anchor+"\n")
 shutil.copyfile(root/"install.sh",out/"install.sh")
 print(json.dumps({"package":entry,"source_files":len(files),"controllers":controllers},indent=2))

@@ -379,6 +379,10 @@ impl Collector {
             .unwrap_or(0.0) as u64;
         let (network, network_available) = self.network(Instant::now());
         Ok(Metrics {
+            boot_id: std::fs::read_to_string("/proc/sys/kernel/random/boot_id")
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
             network_available,
             network,
             latency_probe: true,

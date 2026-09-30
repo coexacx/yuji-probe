@@ -1,11 +1,15 @@
 #![forbid(unsafe_code)]
 mod auth;
+mod backup;
 mod core;
 mod deploy;
 mod files;
+mod history;
 mod http;
+mod migration;
 mod model;
 mod nodes;
+mod operations;
 mod realtime;
 mod ssh;
 mod telegram;
@@ -28,6 +32,7 @@ struct Options {
     supervise: bool,
     worker: bool,
     init: bool,
+    reset_mfa: bool,
 }
 impl Options {
     fn args(&self) -> Vec<String> {
@@ -55,6 +60,7 @@ fn options() -> Result<Options, &'static str> {
         supervise: false,
         worker: false,
         init: false,
+        reset_mfa: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -73,6 +79,7 @@ fn options() -> Result<Options, &'static str> {
             "-supervise" => o.supervise = true,
             "-worker" => o.worker = true,
             "-init" => o.init = true,
+            "--reset-mfa" => o.reset_mfa = true,
             "--version" | "-version" => {
                 println!("vistart-probe-controller {VERSION} rust");
                 std::process::exit(0)
@@ -82,6 +89,9 @@ fn options() -> Result<Options, &'static str> {
     }
     if !o.listen.ip().is_loopback() || o.listen.port() == 0 {
         return Err("listen must be a loopback address");
+    }
+    if o.reset_mfa && o.origin.is_empty() {
+        o.origin = "https://localhost".into();
     }
     let url = reqwest::Url::parse(&o.origin).map_err(|_| "invalid HTTPS origin")?;
     if url.scheme() != "https"
@@ -100,7 +110,7 @@ fn options() -> Result<Options, &'static str> {
             .map_err(|_| "working directory unavailable")?
             .join(o.dir)
     }
-    if [o.daemon, o.supervise, o.worker, o.init]
+    if [o.daemon, o.supervise, o.worker, o.init, o.reset_mfa]
         .iter()
         .filter(|v| **v)
         .count()
@@ -214,6 +224,9 @@ if tokio::time::timeout(Duration::from_secs(5),child.wait()).await.is_err(){let 
 }
 fn run() -> Result<(), &'static str> {
     let o = options()?;
+    if o.reset_mfa {
+        return reset_mfa(&o);
+    }
     if o.init {
         return init(&o);
     }
@@ -251,4 +264,46 @@ fn main() {
         eprintln!("{message}");
         std::process::exit(1)
     }
+}
+
+fn reset_mfa(o: &Options) -> Result<(), &'static str> {
+    use std::{
+        io::{BufRead, Read, Write},
+        os::unix::fs::MetadataExt,
+    };
+    if !rustix::process::geteuid().is_root() {
+        return Err("Run this recovery command as root");
+    }
+    let _lock = lock(&o.dir)?;
+    let path = o.dir.join("auth.json");
+    let meta = std::fs::metadata(&path).map_err(|_| "authentication state unavailable")?;
+    let mut auth: Auth = read_json(&path).map_err(|_| "authentication state unavailable")?;
+    eprint!("Type RESET MFA to remove the authenticator and all recovery codes: ");
+    std::io::stderr()
+        .flush()
+        .map_err(|_| "terminal unavailable")?;
+    let mut line = String::new();
+    std::io::stdin()
+        .lock()
+        .take(64)
+        .read_line(&mut line)
+        .map_err(|_| "confirmation unavailable")?;
+    if line.trim() != "RESET MFA" {
+        return Err("Recovery cancelled");
+    }
+    auth.mfa.clear();
+    auth.mfa_last = 0;
+    auth.recovery.clear();
+    auth.version = token();
+    atomic_json(&path, &auth).map_err(|_| "authentication update failed")?;
+    rustix::fs::chown(
+        &path,
+        Some(rustix::process::Uid::from_raw(meta.uid())),
+        Some(rustix::process::Gid::from_raw(meta.gid())),
+    )
+    .map_err(|_| "authentication ownership update failed")?;
+    println!(
+        "Two-factor authentication reset. Start the controller and sign in with the existing password."
+    );
+    Ok(())
 }

@@ -80,6 +80,9 @@ pub struct PublicNode {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Node {
+    #[serde(default = "crate::operations::default_policy")]
+    pub policy: crate::operations::Policy,
+    pub removing: bool,
     #[serde(rename = "providerName")]
     pub provider_name: String,
     #[serde(rename = "providerURL")]
@@ -149,6 +152,7 @@ pub struct Data {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Auth {
+    pub recovery: Vec<String>,
     #[serde(rename = "mfa")]
     pub mfa: String,
     #[serde(rename = "mfa_last")]
@@ -164,6 +168,8 @@ pub struct Auth {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Audit {
+    pub source: String,
+    pub result: String,
     #[serde(rename = "at")]
     pub at: String,
     #[serde(rename = "action")]
@@ -175,6 +181,8 @@ pub struct Audit {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct NodeSecret {
+    pub recovery_key: String,
+    pub recovery_public: String,
     #[serde(rename = "token_hash")]
     pub token_hash: String,
     #[serde(rename = "token")]

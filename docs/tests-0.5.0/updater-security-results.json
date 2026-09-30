@@ -1,0 +1,15 @@
+{
+  "ok": true,
+  "checks": [
+    "signed-manifest-tamper-and-version-binding",
+    "download-redirect-host-credentials-and-protocol-boundaries",
+    "archive-rejects-traversal",
+    "archive-rejects-private-state",
+    "archive-rejects-duplicate",
+    "archive-rejects-symlink",
+    "ownership-does-not-follow-symbolic-links",
+    "failed-partial-snapshot-never-deletes-original-data",
+    "health-failure-restores-code-state-and-original-storage-path",
+    "successful-update-preserves-pool-state-and-supports-rollback"
+  ]
+}

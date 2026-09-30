@@ -118,6 +118,7 @@ pub fn tls_config() -> Result<Arc<rustls::ClientConfig>> {
 }
 pub async fn connect(
     config: &Config,
+    config_path: &std::path::Path,
     tls: Arc<rustls::ClientConfig>,
     mut metrics: watch::Receiver<Option<Metrics>>,
     stop: CancellationToken,
@@ -200,7 +201,7 @@ pub async fn connect(
                 if frames>2000||traffic>12*1024*1024{return Err("control traffic limit reached");}
                 match msg.kind.as_str(){
                     "ping"=>{if msg.session.len()!=32{return Err("invalid latency probe");}send(&out,Message::new("pong",&msg.session)).await?;},
-                    "ack"=>{},
+                    "ack"=>{crate::management::health(config_path,config);},
                     "ssh_open"=>{
                         if msg.session.len()!=32{return Err("invalid terminal session");}
                         if tunnels.contains_key(&msg.session)||tunnels.len()>=2{

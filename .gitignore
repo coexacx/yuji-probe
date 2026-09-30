@@ -12,3 +12,9 @@
 .env.*
 signing.key
 *.qcow2
+
+/source/state/
+/build/
+**/__pycache__/
+*.pyc
+/source/public/

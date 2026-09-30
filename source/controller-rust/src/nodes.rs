@@ -184,6 +184,16 @@ pub fn save_node(
     if !id.is_empty() && index.is_none() {
         return Err(ApiError::new(404, "服务器不存在"));
     }
+    if i.data
+        .nodes
+        .iter()
+        .any(|n| n.public.id != id && n.ip == v.ip && n.port == v.port)
+    {
+        return Err(ApiError::new(409, "该 SSH 地址已存在，请编辑原节点"));
+    }
+    if index.is_some_and(|k| i.data.nodes[k].removing) {
+        return Err(ApiError::new(409, "节点正在清理"));
+    }
     let mut n = if let Some(index) = index {
         i.data.nodes[index].clone()
     } else {
@@ -262,17 +272,41 @@ pub fn delete_node(app: &App, i: &mut Inner, c: &Context, id: &str) -> ApiResult
         .find(|n| n.public.id == id)
         .cloned()
         .ok_or_else(|| ApiError::new(404, "服务器不存在"))?;
-    let mut data = i.data.clone();
-    data.nodes.retain(|n| n.public.id != id);
-    data.secrets.remove(id);
-    app.save_data(i, data)?;
-    if let Some(link) = i.agents.remove(id) {
-        link.stop.cancel();
+    crate::auth::require_elevated(i, c)?;
+    if !i.data.secrets.contains_key(id) || !n.public.online || !i.agents.contains_key(id) {
+        if let Some(link) = i.agents.remove(id) {
+            link.stop.cancel();
+        }
+        i.tickets.retain(|_, t| t.node_id != id);
+        i.ops.transfers.remove(id);
+        i.ops.retired.remove(id);
+        i.ops.removal_names.remove(id);
+        i.ops.tracks.remove(id);
+        crate::operations::save(app, i)?;
+
+        let mut data = i.data.clone();
+        data.nodes.retain(|n| n.public.id != id);
+        data.secrets.remove(id);
+        app.save_data(i, data)?;
+        crate::history::remove(app, id);
+        crate::telegram::invalidate(app, i);
+        app.record(i, "node_removed_offline", &n.public.name);
+        return Ok(ApiReply::ok(json!({"ok":true})));
     }
+    crate::migration::start_manage(app, i, id, "remove")?;
+    let mut data = i.data.clone();
+    if let Some(n) = data.nodes.iter_mut().find(|n| n.public.id == id) {
+        n.removing = true;
+        n.visible = false;
+        n.deploy_message = "等待远端清除配置".into();
+    }
+    app.save_data(i, data)?;
     i.tickets.retain(|_, t| t.node_id != id);
+    i.ops.removal_names.insert(id.into(), n.public.name.clone());
+    crate::operations::save(app, i)?;
     crate::telegram::invalidate(app, i);
-    app.record(i, "node_deleted", &n.public.name);
-    Ok(ApiReply::ok(json!({"ok":true})))
+    app.record(i, "node_removal_pending", &n.public.name);
+    Ok(ApiReply::accepted(json!({"ok":true,"pending":true})))
 }
 pub fn renew(app: &App, i: &mut Inner, c: &Context, id: &str, body: &[u8]) -> ApiResult<ApiReply> {
     app.guard(i, c, true, true)?;

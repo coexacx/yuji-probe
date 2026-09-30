@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "checks": [
+    "refuses-active-service-lock",
+    "refuses-non-root",
+    "requires-exact-confirmation",
+    "clears-MFA-and-recovery",
+    "preserves-password-and-file-owner",
+    "rotates-auth-version"
+  ]
+}

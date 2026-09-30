@@ -1,9 +1,9 @@
 use crate::Result;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{fs::File, io::Read, path::Path};
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Config {
     pub node_id: String,
     pub token: String,

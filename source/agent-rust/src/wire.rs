@@ -23,6 +23,8 @@ pub struct NetworkInterface {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Metrics {
+    #[serde(default)]
+    pub boot_id: String,
     pub network_available: bool,
     pub network: Vec<NetworkInterface>,
     pub latency_probe: bool,

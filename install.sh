@@ -4,8 +4,8 @@ set +x
 set -Eeuo pipefail
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 umask 077
-readonly YUJI_VERSION=0.4.1
-readonly YUJI_RELEASE_BASE=https://github.com/coexacx/yuji-probe/releases/download/v0.4.1
+readonly YUJI_VERSION=0.5.0
+readonly YUJI_RELEASE_BASE=https://github.com/coexacx/yuji-probe/releases/download/v0.5.0
 readonly YUJI_PUBLIC_KEY=o8+DdHbo82V7fxJEIiEhe5AK/frR91Fz5vjf/pDAnts=
 yuji_domain='' yuji_email='' yuji_accept_terms=0 yuji_cert='' yuji_key=''
 yuji_work='' yuji_changes=0 yuji_success=0 yuji_php_version=''
@@ -266,6 +266,7 @@ for ((yuji_i=0; yuji_i<20; yuji_i++)); do
 done
 (( yuji_healthy == 1 )) || die 'HTTPS 健康检查失败，请查看 systemctl status yuji-probe 和本站 Nginx 日志。'
 systemctl is-active --quiet yuji-probe || die '主控服务未启动。'
+python3 /opt/yuji-probe/ops/update-panel.py --configure --name main --root /opt/yuji-probe --state /var/lib/yuji-probe/control --service yuji-probe.service --origin "https://$yuji_domain" --listen 127.0.0.1:19281
 yuji_success=1
 printf '\n安装完成。访问：https://%s/\n管理员：%s\n密码为刚才设置的值，不会另存明文。\n' "$yuji_domain" "$yuji_user"
 if [[ -n "$yuji_cert" ]]; then note '使用的是您提供的证书；请自行维护该证书续期。'; else note 'HTTPS 证书自动续期已启用。'; fi

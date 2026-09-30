@@ -149,6 +149,9 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
             .find(|n| n.public.id == ticket.node_id)
             .cloned()
             .ok_or_else(|| ApiError::new(409, "节点当前未连接"))?;
+        if node.removing || (!node.policy.terminal && node.policy.files == "off") {
+            return Err(ApiError::new(403, "该节点仅允许监控"));
+        }
         let link = i
             .agents
             .get(&ticket.node_id)
@@ -227,24 +230,32 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         }
         Ok(channel)
     };
-    let channel = match timeout(Duration::from_secs(12), terminal).await {
-        Ok(Ok(v)) => v,
-        _ => {
-            let _ = ws
-                .send(WS::Text(
-                    json!({"type":"error","message":"无法创建 SSH 终端"})
-                        .to_string()
-                        .into(),
-                ))
-                .await;
-            let _ = client
-                .disconnect(russh::Disconnect::ByApplication, "terminal unavailable", "")
-                .await;
-            return;
+    let channel = if node.policy.terminal {
+        match timeout(Duration::from_secs(12), terminal).await {
+            Ok(Ok(v)) => Some(v),
+            _ => {
+                let _ = ws
+                    .send(WS::Text(
+                        json!({"type":"error","message":"无法创建 SSH 终端"})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await;
+                let _ = client
+                    .disconnect(russh::Disconnect::ByApplication, "terminal unavailable", "")
+                    .await;
+                return;
+            }
         }
+    } else {
+        None
     };
-    let (mut shell_read, shell_write) = channel.split();
-    let shell_write = Arc::new(shell_write);
+    let (shell_read, shell_write) = if let Some(channel) = channel {
+        let (r, w) = channel.split();
+        (Some(r), Some(Arc::new(w)))
+    } else {
+        (None, None)
+    };
     let (mut ws_write, mut ws_read) = ws.split();
     let (out, mut send_queue) = mpsc::channel::<WS>(8);
     let credits = Arc::new(Semaphore::new(32));
@@ -261,7 +272,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     };
     let cancel = stop.clone();
     tasks.spawn(async move{loop{tokio::select!{_=cancel.cancelled()=>break,m=send_queue.recv()=>{let Some(m)=m else{break};if !matches!(timeout(Duration::from_secs(5),ws_write.send(m)).await,Ok(Ok(()))){break}}}}cancel.cancel();});
-    notice(&out, "ready", "已通过 Agent 建立 SSH 加密会话").await;
+    let _=out.send(WS::Text(json!({"type":"ready","files":node.policy.files!="off","terminal":node.policy.terminal}).to_string().into())).await;
     let (file_tx, mut file_rx) = mpsc::channel::<files::Request>(2);
     let mut file_service = files::Files::new(
         app.clone(),
@@ -327,6 +338,9 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
             }
             match msg {
                 WS::Binary(raw) => {
+                    let Some(input) = input.as_ref() else {
+                        continue;
+                    };
                     terminal_bytes += raw.len();
                     if raw.len() > 16384 || terminal_bytes > 256 * 1024 {
                         break;
@@ -395,10 +409,16 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                             }
                         }
                         "resize" => {
+                            let Some(input) = input.as_ref() else {
+                                continue;
+                            };
                             let (cols, rows) = size(control.cols, control.rows);
                             let _ = input.window_change(cols, rows, 0, 0).await;
                         }
                         "command" => {
+                            let Some(input) = input.as_ref() else {
+                                continue;
+                            };
                             let script = {
                                 let mut i = read_app.lock();
                                 let command =
@@ -440,65 +460,69 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     });
     let output_stop = stop.clone();
     let output = out.clone();
-    tasks.spawn(async move {
-        let mut total = 0usize;
-        let mut count = 0usize;
-        let mut window = Instant::now();
-        let result = async {
-            while let Some(msg) = shell_read.wait().await {
-                match msg {
-                    ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
-                        for chunk in data.chunks(16384) {
-                            if total + chunk.len() > 64 * 1024 * 1024 {
-                                return;
+    if let Some(mut shell_read) = shell_read {
+        tasks.spawn(async move {
+            let mut total = 0usize;
+            let mut count = 0usize;
+            let mut window = Instant::now();
+            let result = async {
+                while let Some(msg) = shell_read.wait().await {
+                    match msg {
+                        ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
+                            for chunk in data.chunks(16384) {
+                                if total + chunk.len() > 64 * 1024 * 1024 {
+                                    return;
+                                }
+                                if window.elapsed() >= Duration::from_secs(1) {
+                                    window = Instant::now();
+                                    count = 0;
+                                }
+                                if count + chunk.len() > 256 * 1024 {
+                                    tokio::time::sleep(
+                                        Duration::from_secs(1).saturating_sub(window.elapsed()),
+                                    )
+                                    .await;
+                                    window = Instant::now();
+                                    count = 0;
+                                }
+                                let Ok(credit) = credits.acquire().await else {
+                                    return;
+                                };
+                                credit.forget();
+                                if !matches!(
+                                    timeout(
+                                        Duration::from_secs(5),
+                                        output.send(WS::Binary(chunk.to_vec().into()))
+                                    )
+                                    .await,
+                                    Ok(Ok(()))
+                                ) {
+                                    return;
+                                }
+                                total += chunk.len();
+                                count += chunk.len();
                             }
-                            if window.elapsed() >= Duration::from_secs(1) {
-                                window = Instant::now();
-                                count = 0;
-                            }
-                            if count + chunk.len() > 256 * 1024 {
-                                tokio::time::sleep(
-                                    Duration::from_secs(1).saturating_sub(window.elapsed()),
-                                )
-                                .await;
-                                window = Instant::now();
-                                count = 0;
-                            }
-                            let Ok(credit) = credits.acquire().await else {
-                                return;
-                            };
-                            credit.forget();
-                            if !matches!(
-                                timeout(
-                                    Duration::from_secs(5),
-                                    output.send(WS::Binary(chunk.to_vec().into()))
-                                )
-                                .await,
-                                Ok(Ok(()))
-                            ) {
-                                return;
-                            }
-                            total += chunk.len();
-                            count += chunk.len();
                         }
+                        ChannelMsg::Close => {
+                            notice(&output, "closed", "SSH 会话已结束").await;
+                            break;
+                        }
+                        _ => {}
                     }
-                    ChannelMsg::Close => {
-                        notice(&output, "closed", "SSH 会话已结束").await;
-                        break;
-                    }
-                    _ => {}
                 }
-            }
-        };
-        tokio::select! {_=output_stop.cancelled()=>{},_=result=>{}}
-        output_stop.cancel();
-    });
+            };
+            tokio::select! {_=output_stop.cancelled()=>{},_=result=>{}}
+            output_stop.cancel();
+        });
+    }
     let watch_stop = stop.clone();
     let watch_out = out.clone();
     tasks.spawn(async move{let started=Instant::now();let mut next_ping=Instant::now()+Duration::from_secs(25);let mut timer=tokio::time::interval(Duration::from_secs(1));loop{tokio::select!{_=watch_stop.cancelled()=>break,_=timer.tick()=>{let idle=activity.lock().unwrap().elapsed()>Duration::from_secs(600);let overdue=probe.lock().unwrap().as_ref().is_some_and(|(_,at)|at.elapsed()>Duration::from_secs(5));if idle||overdue||started.elapsed()>Duration::from_secs(3600)||!check(){notice(&watch_out,"error","终端已超时或管理授权失效").await;break}
 if Instant::now()>=next_ping{let value=token().as_bytes()[..32].to_vec();*probe.lock().unwrap()=Some((value.clone(),Instant::now()));if !matches!(timeout(Duration::from_secs(5),watch_out.send(WS::Ping(value.into()))).await,Ok(Ok(()))){break}next_ping=Instant::now()+Duration::from_secs(25);}}}}watch_stop.cancel();});
     stop.cancelled().await;
-    let _ = timeout(Duration::from_secs(1), shell_write.close()).await;
+    if let Some(shell) = shell_write {
+        let _ = timeout(Duration::from_secs(1), shell.close()).await;
+    }
     let _ = timeout(
         Duration::from_secs(1),
         client.disconnect(russh::Disconnect::ByApplication, "session ended", ""),

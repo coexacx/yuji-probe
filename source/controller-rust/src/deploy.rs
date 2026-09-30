@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 use std::{net::SocketAddr, time::Duration};
 use tokio::time::timeout;
 use zeroize::Zeroizing;
-const RELEASE_ORIGIN: &str = "https://github.com/coexacx/yuji-probe/releases/download/v0.4.1/";
-const AGENT_VERSION: &str = "0.1.3-rust.1";
+const RELEASE_ORIGIN: &str = "https://github.com/coexacx/yuji-probe/releases/download/v0.5.0/";
+pub const AGENT_VERSION: &str = "0.2.0";
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct Inspect {
@@ -121,17 +121,32 @@ pub fn trust(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<Ap
     app.record(i, "ssh_host_trusted", &found.address);
     Ok(ApiReply::ok(json!({"ok":true})))
 }
-fn ensure_secret(app: &App, i: &mut Inner, id: &str) -> ApiResult<NodeSecret> {
+pub fn ensure_secret(app: &App, i: &mut Inner, id: &str) -> ApiResult<NodeSecret> {
     if let Some(s) = i.data.secrets.get(id)
         && !s.ssh_key.is_empty()
         && !s.token.is_empty()
     {
-        return Ok(s.clone());
+        let mut s = s.clone();
+        if s.recovery_key.is_empty() {
+            let (key, public) =
+                ssh::create_key("vistart-probe-recovery").map_err(|_| ApiError::internal())?;
+            s.recovery_key = app
+                .seal(&format!("{id}:recovery"), &key)
+                .map_err(|_| ApiError::internal())?;
+            s.recovery_public = public;
+        }
+        return Ok(s);
     }
     let plain = Zeroizing::new(token());
     let (key, public) =
         ssh::create_key("vistart-probe-managed").map_err(|_| ApiError::internal())?;
+    let (recovery, recovery_public) =
+        ssh::create_key("vistart-probe-recovery").map_err(|_| ApiError::internal())?;
     let secret = NodeSecret {
+        recovery_key: app
+            .seal(&format!("{id}:recovery"), &recovery)
+            .map_err(|_| ApiError::internal())?,
+        recovery_public,
         token_hash: hex::encode(Sha256::digest(plain.as_bytes())),
         token: app
             .seal(&format!("{id}:token"), plain.as_bytes())
@@ -256,7 +271,7 @@ fn allowed_release_url(url: &reqwest::Url) -> bool {
     match url.host_str() {
         Some("github.com") => {
             url.path()
-                .starts_with("/coexacx/yuji-probe/releases/download/v0.4.1/")
+                .starts_with("/coexacx/yuji-probe/releases/download/v0.5.0/")
                 && url.query().is_none()
         }
         Some("release-assets.githubusercontent.com") => {
@@ -268,13 +283,21 @@ fn allowed_release_url(url: &reqwest::Url) -> bool {
         _ => false,
     }
 }
-async fn get(app: &App, name: &str, limit: usize) -> Result<Vec<u8>, &'static str> {
+pub async fn get(app: &App, name: &str, limit: usize) -> Result<Vec<u8>, &'static str> {
     if name.is_empty()
         || !name
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
     {
         return Err("invalid release name");
+    }
+    // Offline cache is only consumed by callers which verify the signed manifest and digest.
+    let cached = app.0.dir.join("releases").join(name);
+    if let Ok(meta) = std::fs::symlink_metadata(&cached) {
+        if meta.is_file() && meta.len() <= limit as u64 {
+            return std::fs::read(cached).map_err(|_| "release cache unavailable");
+        }
+        return Err("release cache invalid");
     }
     timeout(Duration::from_secs(50), async {
         let mut url = reqwest::Url::parse(&format!("{RELEASE_ORIGIN}{name}"))
@@ -326,7 +349,7 @@ async fn get(app: &App, name: &str, limit: usize) -> Result<Vec<u8>, &'static st
     .map_err(|_| "release download timeout")?
 }
 
-fn release(raw: &[u8], arch: &str) -> Result<ReleaseFile, &'static str> {
+pub fn release(raw: &[u8], arch: &str) -> Result<ReleaseFile, &'static str> {
     let e: SignedRelease = serde_json::from_slice(raw).map_err(|_| "invalid manifest")?;
     let payload = STANDARD.decode(e.payload).map_err(|_| "invalid manifest")?;
     let sig = STANDARD
@@ -356,7 +379,7 @@ fn release(raw: &[u8], arch: &str) -> Result<ReleaseFile, &'static str> {
     }
     Ok(f.clone())
 }
-async fn fetch(app: &App, arch: &str) -> Result<Vec<u8>, &'static str> {
+pub async fn fetch(app: &App, arch: &str) -> Result<Vec<u8>, &'static str> {
     let f = release(&get(app, "stable.json", 16384).await?, arch)?;
     let binary = get(app, &f.name, 32 * 1024 * 1024).await?;
     if binary.len() as i64 != f.size || hex::encode(Sha256::digest(&binary)) != f.sha256 {
@@ -364,10 +387,12 @@ async fn fetch(app: &App, arch: &str) -> Result<Vec<u8>, &'static str> {
     }
     Ok(binary)
 }
-fn installation(
+pub fn installation(
     binary: &[u8],
     config: &[u8],
     public: &str,
+    recovery_public: &str,
+    manifest: &[u8],
     user: &str,
 ) -> Result<Vec<u8>, &'static str> {
     let mut script =
@@ -388,6 +413,8 @@ fn installation(
         ("config.json", config, 0o600),
         ("install.sh", script.as_bytes(), 0o600),
         ("authorized-key", authorized.as_bytes(), 0o600),
+        ("recovery-public", recovery_public.as_bytes(), 0o600),
+        ("agent.manifest", manifest, 0o600),
     ] {
         let mut header = tar::Header::new_gnu();
         header.set_size(bytes.len() as u64);
@@ -457,8 +484,15 @@ async fn run(
     let token = std::str::from_utf8(agent_token).map_err(|_| "节点凭证无效")?;
     let config=Zeroizing::new(serde_json::to_vec(&json!({"node_id":node.public.id,"token":token,"controller_url":app.0.origin.replacen("https://","wss://",1)+"/api/agent","ssh_port":node.port})).map_err(|_|"节点配置无效")?);
     let payload = Zeroizing::new(
-        installation(&binary, &config, &secret.public_key, &node.username)
-            .map_err(|_| "安装文件准备失败")?,
+        installation(
+            &binary,
+            &config,
+            &secret.public_key,
+            &secret.recovery_public,
+            &get(app, "stable.json", 16384).await?,
+            &node.username,
+        )
+        .map_err(|_| "安装文件准备失败")?,
     );
     let temp = ssh::remote(
         &client,
@@ -522,7 +556,7 @@ mod tests {
     #[test]
     fn release_redirect_boundaries() {
         for url in [
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.4.1/stable.json",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.5.0/stable.json",
             "https://release-assets.githubusercontent.com/github-production-release-asset/1/abc?sig=example",
             "https://objects.githubusercontent.com/github-production-release-asset-2e65be/1/abc",
         ] {
@@ -532,13 +566,13 @@ mod tests {
             );
         }
         for url in [
-            "http://github.com/coexacx/yuji-probe/releases/download/v0.4.1/stable.json",
-            "https://github.com:444/coexacx/yuji-probe/releases/download/v0.4.1/stable.json",
-            "https://user:password@github.com/coexacx/yuji-probe/releases/download/v0.4.1/stable.json",
-            "https://github.com/coexacx/other/releases/download/v0.4.1/stable.json",
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.4.1/../../../login",
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.4.1/stable.json#fragment",
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.4.1/stable.json?redirect=1",
+            "http://github.com/coexacx/yuji-probe/releases/download/v0.5.0/stable.json",
+            "https://github.com:444/coexacx/yuji-probe/releases/download/v0.5.0/stable.json",
+            "https://user:password@github.com/coexacx/yuji-probe/releases/download/v0.5.0/stable.json",
+            "https://github.com/coexacx/other/releases/download/v0.5.0/stable.json",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.5.0/../../../login",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.5.0/stable.json#fragment",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.5.0/stable.json?redirect=1",
             "https://release-assets.githubusercontent.com.evil.example/github-production-release-asset/1",
             "https://release-assets.githubusercontent.com/elsewhere/1",
             "https://127.0.0.1/github-production-release-asset/1",
@@ -556,14 +590,24 @@ mod tests {
     }
     #[test]
     fn archive_names_and_namespace() {
-        let b = installation(b"test", b"{}", "ssh-ed25519 test", "root").unwrap();
+        let b = installation(
+            b"test",
+            b"{}",
+            "ssh-ed25519 test",
+            "ssh-ed25519 recovery",
+            b"{}",
+            "root",
+        )
+        .unwrap();
         let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(&b[..]));
         let paths: Vec<_> = tar
             .entries()
             .unwrap()
             .map(|e| e.unwrap().path().unwrap().into_owned())
             .collect();
-        assert_eq!(paths.len(), 4);
+        assert_eq!(paths.len(), 6);
+        assert!(paths.iter().any(|p| p == "agent.manifest"));
+        assert!(paths.iter().any(|p| p == "recovery-public"));
         assert!(paths.iter().all(|p| p.components().count() == 1));
     }
 }

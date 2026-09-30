@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "checks": [
+    "anonymous-new-administration-routes-denied",
+    "two-real-device-sessions-and-revoke",
+    "server-policy-validation-and-persistence",
+    "desktop-and-mobile-new-admin-sections",
+    "encrypted-backup-and-scheduled-retention",
+    "wrong-password-and-tamper-preserve-current-state",
+    "restore-private-state-and-invalidate-sessions",
+    "MFA-generates-ten-unique-hashed-recovery-codes",
+    "recovery-needs-password-is-single-use-and-revokes-old-session",
+    "recovery-regeneration-and-disable-lost-authenticator",
+    "offline-removal-has-no-remote-task-or-secret",
+    "zero-browser-errors"
+  ],
+  "errors": []
+}

@@ -18,7 +18,8 @@ for(const code of Object.keys(dataset)){const low=code.toLowerCase();const file=
 const countries=await asset('countries',countrySource,'js');
 const network=await asset('network',await readFile(root+'/src/network.mjs'),'js');
 const renewals=await asset('renewals',await readFile(root+'/src/renewals.mjs'),'js');
-const admin=await asset('admin',(await readFile(root+'/src/admin.mjs','utf8')).replace("'./terminal.mjs'",JSON.stringify(terminal)).replace("'./authenticator.mjs'",JSON.stringify(authenticator)).replace("'./countries.mjs'",JSON.stringify(countries)).replace("'./renewals.mjs'",JSON.stringify(renewals)),'js');
+const operations=await asset('operations',await readFile(root+'/src/operations.mjs'),'js');
+const admin=await asset('admin',(await readFile(root+'/src/admin.mjs','utf8')).replace("'./operations.mjs'",JSON.stringify(operations)).replace("'./terminal.mjs'",JSON.stringify(terminal)).replace("'./authenticator.mjs'",JSON.stringify(authenticator)).replace("'./countries.mjs'",JSON.stringify(countries)).replace("'./renewals.mjs'",JSON.stringify(renewals)),'js');
 const app=await asset('app',(await readFile(root+'/src/app.mjs','utf8')).replace("'./admin.mjs'",JSON.stringify(admin)).replace("'./countries.mjs'",JSON.stringify(countries)).replace("'./network.mjs'",JSON.stringify(network)),'js');
 const style=await asset('style',(await readFile(root+'/frontend-tools/node_modules/@xterm/xterm/css/xterm.css','utf8'))+'\n'+(await readFile(root+'/src/style.css','utf8')),'css');
 const html=(await readFile(root+'/src/index.html','utf8')).replace('__STYLE__',style).replace('__SCRIPT__',app);

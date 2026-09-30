@@ -32,6 +32,13 @@ fn main() {
     }
 }
 fn run_main() -> Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|s| s == "--manage") {
+        if args.len() != 4 || args[2] != "-config" {
+            return Err("usage: --manage -config PATH");
+        }
+        return vistart_probe_agent::management::run(std::path::Path::new(&args[3]));
+    }
     let Some(path) = config_path()? else {
         return Ok(());
     };
@@ -60,7 +67,7 @@ fn run_main() -> Result<()> {
         let mut delay=Duration::from_secs(1);
         loop{
             let started=Instant::now();
-            tokio::select!{_=stop.cancelled()=>break,_=connection::connect(&config,tls.clone(),metrics_rx.clone(),stop.clone())=>{}}
+            tokio::select!{_=stop.cancelled()=>break,_=connection::connect(&config,&path,tls.clone(),metrics_rx.clone(),stop.clone())=>{}}
             if stop.is_cancelled(){break;}
             if started.elapsed()>Duration::from_secs(60){delay=Duration::from_secs(1);}
             let mut random=[0u8;2];
