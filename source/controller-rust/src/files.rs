@@ -384,7 +384,7 @@ pub struct Files {
     client: Arc<ssh::Client>,
     node: String,
     name: String,
-    retained: String,
+    file_sessions: String,
     authorized: Authorize,
     snapshots: HashMap<String, Snapshot>,
     order: VecDeque<String>,
@@ -404,7 +404,7 @@ impl Files {
         client: Arc<ssh::Client>,
         node: String,
         name: String,
-        retained: String,
+        file_sessions: String,
         authorized: Authorize,
     ) -> Self {
         Self {
@@ -414,7 +414,7 @@ impl Files {
             client,
             node,
             name,
-            retained,
+            file_sessions,
             authorized,
             snapshots: HashMap::new(),
             order: VecDeque::new(),

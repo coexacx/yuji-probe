@@ -77,7 +77,7 @@ pub async fn claim(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
         return Err(ApiError::new(405, "请求方法不正确"));
     }
     let v: Claim = decode(&body)?;
-    if !crate::retained::valid(&v.token)
+    if !crate::file_sessions::valid(&v.token)
         || !["amd64", "arm64"].contains(&v.arch.as_str())
         || v.host_key.len() > 4096
     {

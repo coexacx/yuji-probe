@@ -1,13 +1,11 @@
-//! Remote tmux sessions are scoped to this panel and authenticated administration.
+//! File-transfer leases, independent of SSH shells. Disconnects always end the shell.
 use crate::{core::*, ssh};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use sha2::{Digest, Sha256};
 use std::{collections::HashMap, time::Duration};
 
 pub const RETENTION: i64 = 1800;
 #[derive(Clone, Serialize, Deserialize)]
-pub struct Retained {
+pub struct TransferSession {
     pub id: String,
     pub node: String,
     pub owner: String,
@@ -19,75 +17,20 @@ pub struct Retained {
     #[serde(skip)]
     pub attached: bool,
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Input {
-    id: String,
-}
-pub fn load(dir: &std::path::Path) -> Result<HashMap<String, Retained>, &'static str> {
-    match read_json::<HashMap<String, Retained>>(&dir.join("terminal-sessions.json")) {
+pub fn load(dir: &std::path::Path) -> Result<HashMap<String, TransferSession>, &'static str> {
+    match read_json::<HashMap<String, TransferSession>>(&dir.join("file-sessions.json")) {
         Ok(v) if v.len() <= 32 && v.iter().all(|(k, r)| k == &r.id && valid(k)) => Ok(v),
-        Ok(_) => Err("terminal state invalid"),
+        Ok(_) => Err("file transfer state invalid"),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(HashMap::new()),
-        Err(_) => Err("terminal state unavailable"),
+        Err(_) => Err("file transfer state unavailable"),
     }
 }
 pub fn valid(id: &str) -> bool {
     id.len() == 64 && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
 pub fn save(app: &App, i: &Inner) -> ApiResult<()> {
-    atomic_json(&app.0.dir.join("terminal-sessions.json"), &i.retained)
+    atomic_json(&app.0.dir.join("file-sessions.json"), &i.file_sessions)
         .map_err(|_| ApiError::internal())
-}
-pub fn prefix(app: &App) -> String {
-    // Stable across domain migration, private to this panel installation.
-    format!(
-        "tmux -L yuji-{} -f /dev/null",
-        &hex::encode(Sha256::digest(app.0.master.as_slice()))[..20]
-    )
-}
-pub fn attach_command(app: &App, id: &str) -> String {
-    debug_assert!(valid(id));
-    format!(
-        "{} attach-session -t {}",
-        prefix(app),
-        ssh::quote(&format!("yuji_{id}"))
-    )
-}
-pub async fn prepare(
-    app: &App,
-    client: &ssh::Client,
-    id: &str,
-    fresh: bool,
-) -> Result<bool, &'static str> {
-    if fresh
-        && !matches!(
-            tokio::time::timeout(
-                Duration::from_secs(5),
-                ssh::exec(client, "command -v tmux", &[], 4096)
-            )
-            .await,
-            Ok(Ok(_))
-        )
-    {
-        return Ok(false);
-    }
-    let base = prefix(app);
-    let name = ssh::quote(&format!("yuji_{id}"));
-    let command = if fresh {
-        format!(
-            "command -v tmux >/dev/null || exit 73; {base} new-session -d -s {name} -x 100 -y 30 && {base} set-option -t {name} status off && {base} set-option -t {name} history-limit 2000 && {base} set-option -t {name} destroy-unattached off"
-        )
-    } else {
-        format!("{base} has-session -t {name}")
-    };
-    tokio::time::timeout(
-        Duration::from_secs(10),
-        ssh::exec(client, &command, &[], 4096),
-    )
-    .await
-    .map_err(|_| "terminal prepare timeout")??;
-    Ok(true)
 }
 pub fn reserve(
     app: &App,
@@ -95,32 +38,47 @@ pub fn reserve(
     session: &Session,
     node: &str,
     id: &str,
-) -> ApiResult<(String, bool)> {
-    if !id.is_empty() {
+) -> ApiResult<String> {
+    if !id.is_empty() && i.file_sessions.contains_key(id) {
         let r = i
-            .retained
+            .file_sessions
             .get_mut(id)
             .filter(|r| {
                 r.node == node
+                    && r.owner == session.handle
                     && r.version == session.version
                     && !r.closing
                     && !r.attached
                     && now() - r.touched <= RETENTION
             })
-            .ok_or_else(|| ApiError::new(409, "会话已结束、过期或正在其他窗口使用"))?;
+            .ok_or_else(|| {
+                ApiError::new(
+                    409,
+                    "文件续传记录已过期或正在其他窗口使用，请再次点击连接以新建会话",
+                )
+            })?;
         r.attached = true;
         r.owner = session.handle.clone();
         r.touched = now();
         save(app, i)?;
-        return Ok((id.into(), false));
+        return Ok(id.into());
     }
-    if i.retained.len() >= 8 {
-        return Err(ApiError::new(429, "最多保留 8 个终端，请先结束不用的会话"));
+    if i.file_sessions.len() >= 32 {
+        // Empty disconnected workspaces may be evicted; never evict partial uploads.
+        i.file_sessions
+            .retain(|id, r| r.attached || crate::files::transfer::has_session(app, id));
+        save(app, i)?;
+    }
+    if i.file_sessions.len() >= 32 {
+        return Err(ApiError::new(
+            429,
+            "文件传输工作区数量已满，请关闭不用的终端",
+        ));
     }
     let id = token();
-    i.retained.insert(
+    i.file_sessions.insert(
         id.clone(),
-        Retained {
+        TransferSession {
             id: id.clone(),
             node: node.into(),
             owner: session.handle.clone(),
@@ -132,11 +90,11 @@ pub fn reserve(
         },
     );
     save(app, i)?;
-    Ok((id, true))
+    Ok(id)
 }
 pub fn detached(app: &App, id: &str) {
     let mut i = app.lock();
-    if let Some(r) = i.retained.get_mut(id) {
+    if let Some(r) = i.file_sessions.get_mut(id) {
         r.attached = false;
         r.touched = now();
     }
@@ -144,36 +102,21 @@ pub fn detached(app: &App, id: &str) {
 }
 pub fn ending(app: &App, id: &str) {
     let mut i = app.lock();
-    if let Some(r) = i.retained.get_mut(id) {
+    if let Some(r) = i.file_sessions.get_mut(id) {
         r.closing = true;
     }
     let _ = save(app, &i);
 }
-pub fn api(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
-    let s = app.guard(i, c, true, c.method != "GET")?;
-    if c.method == "GET" {
-        let list:Vec<_>=i.retained.values().filter(|r|r.version==s.version&&!r.closing&&(r.attached||now()-r.touched<=RETENTION)).map(|r|json!({"id":r.id,"node":r.node,"attached":r.attached,"created":r.created,"expires":if r.attached {0}else{r.touched+RETENTION}})).collect();
-        return Ok(ApiReply::ok(
-            json!({"sessions":list,"retentionSeconds":RETENTION}),
-        ));
-    }
-    if c.method != "POST" {
-        return Err(ApiError::new(405, "请求方法不正确"));
-    }
-    let v: Input = decode(body)?;
-    let r = i
-        .retained
-        .get_mut(&v.id)
-        .filter(|r| r.version == s.version)
-        .ok_or_else(|| ApiError::new(404, "会话不存在"))?;
-    r.closing = true;
-    save(app, i)?;
-    Ok(ApiReply::ok(json!({"ok":true})))
-}
 pub async fn cleanup_one(app: &App, id: &str) -> bool {
+    if !crate::files::transfer::has_session(app, id) {
+        let mut i = app.lock();
+        i.file_sessions.remove(id);
+        let _ = save(app, &i);
+        return true;
+    }
     let info = {
         let i = app.lock();
-        i.retained.get(id).and_then(|r| {
+        i.file_sessions.get(id).and_then(|r| {
             Some((
                 r.clone(),
                 i.data.nodes.iter().find(|n| n.public.id == r.node)?.clone(),
@@ -187,32 +130,22 @@ pub async fn cleanup_one(app: &App, id: &str) -> bool {
     };
     let work = async {
         let c = ssh::agent_client(app, link, &node.public.id, &node.username, &secret).await?;
-        let command = format!(
-            "{} kill-session -t {} 2>/dev/null || ! {} has-session -t {} 2>/dev/null",
-            prefix(app),
-            ssh::quote(&format!("yuji_{}", r.id)),
-            prefix(app),
-            ssh::quote(&format!("yuji_{}", r.id))
-        );
         let files_clean = crate::files::transfer::remove_session(app, &r.id, &c).await;
-        let result = ssh::exec(&c, &command, &[], 4096).await;
         let _ = c
             .disconnect(russh::Disconnect::ByApplication, "terminal ended", "")
             .await;
-        result.and({
-            if files_clean {
-                Ok(())
-            } else {
-                Err("file cleanup pending")
-            }
-        })
+        if files_clean {
+            Ok(())
+        } else {
+            Err("file cleanup pending")
+        }
     };
     if matches!(
         tokio::time::timeout(Duration::from_secs(15), work).await,
         Ok(Ok(()))
     ) {
         let mut i = app.lock();
-        i.retained.remove(id);
+        i.file_sessions.remove(id);
         let _ = save(app, &i);
         true
     } else {
@@ -232,16 +165,16 @@ pub fn start(app: &App) {
                 let nodes: std::collections::HashSet<String> =
                     i.data.nodes.iter().map(|n| n.public.id.clone()).collect();
                 let missing: Vec<_> = i
-                    .retained
+                    .file_sessions
                     .values()
                     .filter(|r| !nodes.contains(&r.node))
                     .map(|r| r.id.clone())
                     .collect();
                 for id in missing {
-                    i.retained.remove(&id);
+                    i.file_sessions.remove(&id);
                     changed = true;
                 }
-                for r in i.retained.values_mut() {
+                for r in i.file_sessions.values_mut() {
                     if r.attached && !r.closing && now() - r.touched >= 60 {
                         r.touched = now();
                         changed = true;
@@ -256,7 +189,7 @@ pub fn start(app: &App) {
                 if changed {
                     let _ = save(&app, &i);
                 }
-                i.retained
+                i.file_sessions
                     .values()
                     .filter(|r| r.closing && !r.attached)
                     .map(|r| r.id.clone())
@@ -272,7 +205,7 @@ pub fn start(app: &App) {
 mod tests {
     use super::*;
     #[test]
-    fn session_ids_reject_shell_content() {
+    fn file_session_ids_reject_path_content() {
         assert!(valid(&"a".repeat(64)));
         for s in ["../x", "$(id)", "a;id", ""] {
             assert!(!valid(s));

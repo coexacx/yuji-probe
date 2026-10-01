@@ -486,7 +486,7 @@ fn snapshot(files: &Files, t: &Transfer) -> Checkpoint {
     Checkpoint {
         id: t.id.clone(),
         node: files.node.clone(),
-        session: files.retained.clone(),
+        session: files.file_sessions.clone(),
         version: files.app.lock().auth.version.clone(),
         path: t.path.clone(),
         temporary: t
@@ -513,13 +513,13 @@ fn checkpoint_write(app: &App, v: &Checkpoint) -> Result<(), Problem> {
     atomic_json(&checkpoint_path(app, &v.id), v).map_err(|_| error("storage", "无法保存续传状态"))
 }
 fn checkpoint_read(files: &Files, id: &str) -> Result<Checkpoint, Problem> {
-    if !crate::retained::valid(id) {
+    if !crate::file_sessions::valid(id) {
         return Err(error("missing", "续传记录不存在"));
     }
     let v: Checkpoint = read_json(&checkpoint_path(&files.app, id))
         .map_err(|_| error("missing", "续传记录不存在"))?;
     if v.node != files.node
-        || v.session != files.retained
+        || v.session != files.file_sessions
         || v.version != files.app.lock().auth.version
         || now() - v.touched > 86400
         || !valid_path(&v.path)
@@ -585,7 +585,7 @@ with os.fdopen(fd,'rb') as f:
     .await
     .map_err(|_| error("conflict", "远端文件校验失败，请重新开始"))?;
     let s = result.trim();
-    if !crate::retained::valid(s) {
+    if !crate::file_sessions::valid(s) {
         return Err(error("conflict", "远端校验结果不正确"));
     }
     Ok(s.into())
@@ -683,6 +683,15 @@ async fn resume(files: &mut Files, r: &Request) -> Result<Value, Problem> {
     });
     Ok(reply)
 }
+pub(crate) fn has_session(app: &App, session: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(app.0.dir.join("transfers")) else {
+        return false;
+    };
+    entries
+        .flatten()
+        .take(128)
+        .any(|e| read_json::<Checkpoint>(&e.path()).is_ok_and(|v| v.session == session))
+}
 pub(crate) async fn remove_session(app: &App, session: &str, client: &ssh::Client) -> bool {
     let entries = match std::fs::read_dir(app.0.dir.join("transfers")) {
         Ok(entries) => entries,
@@ -693,7 +702,7 @@ pub(crate) async fn remove_session(app: &App, session: &str, client: &ssh::Clien
         let Ok(v) = read_json::<Checkpoint>(&entry.path()) else {
             continue;
         };
-        if v.session != session || !crate::retained::valid(&v.id) || !valid_path(&v.path) {
+        if v.session != session || !crate::file_sessions::valid(&v.id) || !valid_path(&v.path) {
             continue;
         }
         if v.upload {

@@ -71,14 +71,14 @@
 .file-code-editor .cm-search button{color:inherit}
 .terminal-keybar button{touch-action:manipulation}
 
-.terminal-restore{max-width:190px;min-width:110px;color:inherit;background:transparent;border:1px solid #8884;border-radius:6px;padding:6px}
+
 .file-transfer-queue{flex:none;max-height:210px;overflow:auto;border-top:1px solid #8883;padding:10px;font-size:12px}
 .file-transfer-queue>strong{font-weight:500}
 .file-transfer-job{display:flex;flex-wrap:wrap;align-items:center;gap:5px;padding:7px 0;border-bottom:1px solid #8882}
 .file-transfer-job>span{width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .file-transfer-job>small{flex:1;min-width:80px;overflow-wrap:anywhere}
 .file-transfer-job button{font-size:11px;padding:3px 7px;border:1px solid #8883;border-radius:4px;color:inherit;background:transparent}
-@media(max-width:700px){.terminal-restore{max-width:150px}.file-code-editor .cm-search input{max-width:130px}}
+@media(max-width:700px){.file-code-editor .cm-search input{max-width:130px}}
 
 .file-code-editor .cm-search .cm-button{background:transparent;border:1px solid #8884;border-radius:5px;padding:3px 8px;color:inherit;font:inherit}
 .file-code-editor .cm-search input{border:1px solid #8885;border-radius:5px;padding:4px 6px}

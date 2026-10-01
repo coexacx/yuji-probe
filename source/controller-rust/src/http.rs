@@ -131,7 +131,7 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
             let name = i.auth.username.clone();
             app.record(&mut i, "logout", &name);
             let x = i.new_session(&x.id, false)?;
-            crate::retained::save(app, &i)?;
+            crate::file_sessions::save(app, &i)?;
             Ok(ApiReply::session(i.info(&x), &x.id))
         }
         ("/api/public/theme", "GET") | ("/api/admin/theme", "GET") => crate::theme::read(&mut i),
@@ -186,9 +186,6 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
             Ok(ApiReply::ok(json!({"events":i.audit})))
         }
         ("/api/admin/enrollment", "POST") => crate::enrollment::issue(app, &mut i, c, body),
-        ("/api/admin/terminal-sessions", "GET" | "POST") => {
-            crate::retained::api(app, &mut i, c, body)
-        }
         ("/api/admin/terminal-ticket", "POST") => realtime::ticket(app, &mut i, c, body),
         ("/api/admin/trust-ssh", "POST") => deploy::trust(app, &mut i, c, body),
         ("/api/admin/deploy", "POST") => deploy::begin(app, &mut i, c, body),
@@ -262,7 +259,8 @@ pub async fn serve(app: App, listen: SocketAddr) -> Result<(), &'static str> {
     let slots = Arc::new(Semaphore::new(256));
     let mut tasks = JoinSet::new();
     telegram::start(&app);
-    crate::retained::start(&app);
+    crate::file_sessions::start(&app);
+    crate::legacy_terminals::start(&app);
     crate::operations::start(&app);
     eprintln!("Rust probe controller started on loopback");
     loop {
