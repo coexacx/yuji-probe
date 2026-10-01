@@ -4,7 +4,7 @@ import {setupLeaseFields,leaseInput,money,cycleLabel,showBilling} from "/assets/
 import {createInspectorUI} from "/assets/inspector-5d14e98d3224.js";
 import {createOperations} from "/assets/operations-2a02f5588e43.js";
 import {authenticatorCanvas} from "/assets/authenticator-19965621ba87.js";
-import {createTerminalUI} from "/assets/terminal-2a8da8411304.js";
+import {createTerminalUI} from "/assets/terminal-9cad8f0e1924.js";
 import {countries as allCountries} from "/assets/countries-3dabb5bbec57.js";
 import {createRenewalUI,formatExpiry,localExpiry} from "/assets/renewals-8bbd577cc65f.js";
 export function initAdmin(hooks){

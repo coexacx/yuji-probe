@@ -43,6 +43,69 @@ struct Control {
     cols: i64,
     rows: i64,
 }
+// Bound memory, throughput and unresponsive peers, not useful session output.
+const TERMINAL_IO_TIMEOUT: Duration = Duration::from_secs(30);
+const PING_INTERVAL: Duration = Duration::from_secs(25);
+const PONG_TIMEOUT: Duration = Duration::from_secs(75);
+
+struct Heartbeat {
+    pending: Option<(Vec<u8>, Instant)>,
+    next_ping: Instant,
+}
+impl Heartbeat {
+    fn new(at: Instant) -> Self {
+        Self {
+            pending: None,
+            next_ping: at + PING_INTERVAL,
+        }
+    }
+    fn expired(&self, at: Instant) -> bool {
+        self.pending
+            .as_ref()
+            .is_some_and(|(_, sent)| at.duration_since(*sent) >= PONG_TIMEOUT)
+    }
+    fn ping(&mut self, at: Instant) -> Option<Vec<u8>> {
+        if at < self.next_ping || self.expired(at) {
+            return None;
+        }
+        self.next_ping = at + PING_INTERVAL;
+        // Retries keep the original challenge and deadline. They never revive a dead peer.
+        let (bytes, _) = self
+            .pending
+            .get_or_insert_with(|| (token().as_bytes()[..32].to_vec(), at));
+        Some(bytes.clone())
+    }
+    fn acknowledge(&mut self, bytes: &[u8], at: Instant) -> bool {
+        if self.expired(at)
+            || !self
+                .pending
+                .as_ref()
+                .is_some_and(|(expected, _)| expected.as_slice() == bytes)
+        {
+            return false;
+        }
+        self.pending = None;
+        true
+    }
+}
+
+type EndReason = Arc<Mutex<Option<&'static str>>>;
+fn ended(reason: &EndReason, value: &'static str) {
+    reason.lock().unwrap().get_or_insert(value);
+}
+fn ending_message(reason: &str) -> (&'static str, &'static str) {
+    match reason {
+        "user_disconnect" | "browser_closed" => ("closed", "SSH 会话已关闭"),
+        "ssh_channel_closed" => ("closed", "远端 SSH 会话已结束"),
+        "heartbeat_timeout" => ("error", "终端心跳长时间无响应，请检查网络后重新连接"),
+        "authorization_lost" => ("error", "管理授权或节点连接已失效，请重新连接"),
+        "input_stalled" => ("error", "远端 SSH 长时间未接收输入，请重新连接"),
+        "browser_write_timeout" => ("error", "终端数据发送长时间受阻，请检查网络后重新连接"),
+        "invalid_message" => ("error", "终端请求无效或超过速率限制，连接已关闭"),
+        _ => ("error", "终端连接已中断，请重新连接"),
+    }
+}
+
 fn size(cols: i64, rows: i64) -> (u32, u32) {
     (cols.clamp(20, 300) as u32, rows.clamp(5, 120) as u32)
 }
@@ -102,6 +165,8 @@ struct TerminalGuard {
     name: String,
     file_sessions: String,
     stop: CancellationToken,
+    started: Instant,
+    reason: EndReason,
 }
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
@@ -113,7 +178,17 @@ impl Drop for TerminalGuard {
         if let Some(all) = i.terminals.get_mut(&self.sid) {
             all.remove(&self.id);
         }
-        self.app.record(&mut i, "terminal_closed", &self.name);
+        let reason = self.reason.lock().unwrap().unwrap_or("connection_ended");
+        self.app.record(
+            &mut i,
+            "terminal_closed",
+            &format!(
+                "{} · {} · {}s",
+                self.name,
+                reason,
+                self.started.elapsed().as_secs()
+            ),
+        );
     }
 }
 async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: WebSocket) {
@@ -210,6 +285,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         }
     };
     drop(pending);
+    let reason: EndReason = Arc::new(Mutex::new(None));
     let _guard = TerminalGuard {
         app: app.clone(),
         sid: session.id.clone(),
@@ -217,6 +293,8 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         name: node.public.name.clone(),
         file_sessions: file_sessions_id.clone(),
         stop: stop.clone(),
+        started: Instant::now(),
+        reason: reason.clone(),
     };
     let client = tokio::select! {_=stop.cancelled()=>return,c=ssh::agent_client(&app,link.clone(),&node.public.id,&node.username,&secret)=>match c{Ok(c)=>c,Err(_)=>{let _=ws.send(WS::Text(json!({"type":"error","message":"SSH 连接未完成，请检查现有终端数量、节点用户、公钥授权与主机指纹"}).to_string().into())).await;return}}};
     let files_session = file_sessions_id.clone();
@@ -286,8 +364,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     let (mut ws_write, mut ws_read) = ws.split();
     let (out, mut send_queue) = mpsc::channel::<WS>(8);
     let credits = Arc::new(Semaphore::new(32));
-    let activity = Arc::new(Mutex::new(Instant::now()));
-    let probe = Arc::new(Mutex::new(None::<(Vec<u8>, Instant)>));
+    let probe = Arc::new(Mutex::new(Heartbeat::new(Instant::now())));
     let mut tasks = JoinSet::new();
     let check: files::Authorize = {
         let app = app.clone();
@@ -306,7 +383,38 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         })
     };
     let cancel = stop.clone();
-    tasks.spawn(async move{loop{tokio::select!{_=cancel.cancelled()=>break,m=send_queue.recv()=>{let Some(m)=m else{break};if !matches!(timeout(Duration::from_secs(5),ws_write.send(m)).await,Ok(Ok(()))){break}}}}cancel.cancel();});
+    let writer_reason = reason.clone();
+    let writer_check = check.clone();
+    let mut writer_task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    if !writer_check() { ended(&writer_reason, "authorization_lost"); }
+                    let why = writer_reason.lock().unwrap().unwrap_or("connection_ended");
+                    let (kind, message) = ending_message(why);
+                    let _ = timeout(Duration::from_secs(1), async {
+                        ws_write.send(WS::Text(json!({"type":kind,"message":message}).to_string().into())).await?;
+                        ws_write.send(WS::Close(None)).await
+                    }).await;
+                    break;
+                }
+                message = send_queue.recv() => {
+                    let Some(message) = message else { break };
+                    let result = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => continue,
+                        result = timeout(TERMINAL_IO_TIMEOUT, ws_write.send(message)) => result,
+                    };
+                    if !matches!(result, Ok(Ok(()))) {
+                        ended(&writer_reason, "browser_write_timeout");
+                        break;
+                    }
+                }
+            }
+        }
+        cancel.cancel();
+    });
     let _ = out
         .send(WS::Text(
             json!({"type":"ready","files":!inspect_only,"terminal":!inspect_only,"inspection":true,"transferSession":files_session})
@@ -345,7 +453,10 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     });
     let read_stop = stop.clone();
     let read_app = app.clone();
-    let read_activity = activity.clone();
+    let read_session = session.clone();
+    let read_link = link.clone();
+    let read_node = node.public.id.clone();
+    let read_reason = reason.clone();
     let read_credits = credits.clone();
     let read_check = check.clone();
     let read_out = out.clone();
@@ -360,14 +471,32 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         let mut file_count = 0;
         loop {
             let msg = tokio::select! {_=read_stop.cancelled()=>break,m=ws_read.next()=>m};
-            let Some(Ok(msg)) = msg else { break };
+            let Some(Ok(msg)) = msg else {
+                ended(&read_reason, "browser_connection_lost");
+                break;
+            };
             match msg {
                 WS::Pong(bytes) => {
-                    let mut p = read_probe.lock().unwrap();
-                    if p.as_ref()
-                        .is_some_and(|(v, _)| v.as_slice() == bytes.as_ref())
-                    {
-                        *p = None;
+                    let alive = read_probe
+                        .lock()
+                        .unwrap()
+                        .acknowledge(bytes.as_ref(), Instant::now());
+                    if alive {
+                        let mut i = read_app.lock();
+                        // A live, already authorized terminal counts as session activity.
+                        // Never extend absolute expiry or resurrect revoked credentials.
+                        if !i.terminal_valid(
+                            &read_session.id,
+                            &read_session.version,
+                            &read_node,
+                            &read_link,
+                        ) {
+                            ended(&read_reason, "authorization_lost");
+                            break;
+                        }
+                        if let Some(s) = i.sessions.get_mut(&read_session.id) {
+                            s.seen = now();
+                        }
                     }
                     continue;
                 }
@@ -377,7 +506,10 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                     }
                     continue;
                 }
-                WS::Close(_) => break,
+                WS::Close(_) => {
+                    ended(&read_reason, "browser_closed");
+                    break;
+                }
                 _ => {}
             }
             if window.elapsed() >= Duration::from_secs(1) {
@@ -392,7 +524,12 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                 WS::Text(b) => b.len(),
                 _ => 0,
             };
-            if frames > 300 || bytes > files::MAX_FRAME || !read_check() {
+            if !read_check() {
+                ended(&read_reason, "authorization_lost");
+                break;
+            }
+            if frames > 300 || bytes > files::MAX_FRAME {
+                ended(&read_reason, "invalid_message");
                 break;
             }
             match msg {
@@ -404,11 +541,11 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                     if raw.len() > 16384 || terminal_bytes > 256 * 1024 {
                         break;
                     }
-                    *read_activity.lock().unwrap() = Instant::now();
                     if !matches!(
-                        timeout(Duration::from_secs(5), input.data(raw.as_ref())).await,
+                        timeout(TERMINAL_IO_TIMEOUT, input.data(raw.as_ref())).await,
                         Ok(Ok(()))
                     ) {
+                        ended(&read_reason, "input_stalled");
                         break;
                     }
                 }
@@ -456,7 +593,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                             continue;
                         }
                         match file_tx.try_send(r) {
-                            Ok(_) => *read_activity.lock().unwrap() = Instant::now(),
+                            Ok(_) => {}
                             Err(e) => {
                                 let r = e.into_inner();
                                 files::respond(
@@ -508,11 +645,10 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                                 }
                             };
                             if let Some(script) = script {
-                                *read_activity.lock().unwrap() = Instant::now();
                                 let command =
                                     format!("{}\n", script.trim_end_matches(['\r', '\n']));
                                 if !matches!(
-                                    timeout(Duration::from_secs(5), input.data(command.as_bytes()))
+                                    timeout(TERMINAL_IO_TIMEOUT, input.data(command.as_bytes()))
                                         .await,
                                     Ok(Ok(()))
                                 ) {
@@ -523,6 +659,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                             }
                         }
                         "close" => {
+                            ended(&read_reason, "user_disconnect");
                             file_sessions::ending(&read_app, &read_file_sessions);
                             break;
                         }
@@ -538,9 +675,9 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     let output = out.clone();
     let output_app = app.clone();
     let output_file_sessions = file_sessions_id.clone();
+    let output_reason = reason.clone();
     if let Some(mut shell_read) = shell_read {
         tasks.spawn(async move {
-            let mut total = 0usize;
             let mut count = 0usize;
             let mut window = Instant::now();
             let result = async {
@@ -549,9 +686,6 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                     match msg {
                         ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
                             for chunk in data.chunks(16384) {
-                                if total + chunk.len() > 64 * 1024 * 1024 {
-                                    return;
-                                }
                                 if window.elapsed() >= Duration::from_secs(1) {
                                     window = Instant::now();
                                     count = 0;
@@ -570,15 +704,15 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                                 credit.forget();
                                 if !matches!(
                                     timeout(
-                                        Duration::from_secs(5),
+                                        TERMINAL_IO_TIMEOUT,
                                         output.send(WS::Binary(chunk.to_vec().into()))
                                     )
                                     .await,
                                     Ok(Ok(()))
                                 ) {
+                                    ended(&output_reason, "browser_write_timeout");
                                     return;
                                 }
-                                total += chunk.len();
                                 count += chunk.len();
                             }
                         }
@@ -587,21 +721,55 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                             if exited {
                                 file_sessions::ending(&output_app, &output_file_sessions);
                             }
-                            notice(&output, "closed", "SSH 会话已结束").await;
+                            ended(&output_reason, "ssh_channel_closed");
                             break;
                         }
                         _ => {}
                     }
                 }
             };
-            tokio::select! {_=output_stop.cancelled()=>{},_=result=>{}}
+            tokio::select! {_=output_stop.cancelled()=>{},_=result=>{ended(&output_reason, "ssh_channel_closed");}}
             output_stop.cancel();
         });
     }
     let watch_stop = stop.clone();
     let watch_out = out.clone();
-    tasks.spawn(async move{let started=Instant::now();let mut next_ping=Instant::now()+Duration::from_secs(25);let mut timer=tokio::time::interval(Duration::from_secs(1));loop{tokio::select!{_=watch_stop.cancelled()=>break,_=timer.tick()=>{let idle=activity.lock().unwrap().elapsed()>Duration::from_secs(600);let overdue=probe.lock().unwrap().as_ref().is_some_and(|(_,at)|at.elapsed()>Duration::from_secs(5));if idle||overdue||started.elapsed()>Duration::from_secs(28800)||!check(){notice(&watch_out,"error","终端已超时或管理授权失效").await;break}
-if Instant::now()>=next_ping{let value=token().as_bytes()[..32].to_vec();*probe.lock().unwrap()=Some((value.clone(),Instant::now()));if !matches!(timeout(Duration::from_secs(5),watch_out.send(WS::Ping(value.into()))).await,Ok(Ok(()))){break}next_ping=Instant::now()+Duration::from_secs(25);}}}}watch_stop.cancel();});
+    let watch_reason = reason.clone();
+    tasks.spawn(async move {
+        let mut timer = tokio::time::interval(Duration::from_secs(1));
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                _ = watch_stop.cancelled() => break,
+                _ = timer.tick() => {
+                    if !check() {
+                        ended(&watch_reason, "authorization_lost");
+                        break;
+                    }
+                    let at = Instant::now();
+                    let (expired, ping) = {
+                        let mut p = probe.lock().unwrap();
+                        (p.expired(at), p.ping(at))
+                    };
+                    if expired {
+                        ended(&watch_reason, "heartbeat_timeout");
+                        break;
+                    }
+                    if let Some(value) = ping {
+                        let result = tokio::select! {
+                            _ = watch_stop.cancelled() => break,
+                            r = timeout(TERMINAL_IO_TIMEOUT, watch_out.send(WS::Ping(value.into()))) => r,
+                        };
+                        if !matches!(result, Ok(Ok(()))) {
+                            ended(&watch_reason, "browser_write_timeout");
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        watch_stop.cancel();
+    });
     stop.cancelled().await;
     // Closing the PTY comes first; parked file checkpoints do not keep shells alive.
     if let Some(shell) = shell_write {
@@ -630,6 +798,14 @@ if Instant::now()>=next_ping{let value=token().as_bytes()[..32].to_vec();*probe.
         client.disconnect(russh::Disconnect::ByApplication, "session ended", ""),
     )
     .await;
+    // Give the writer a bounded chance to deliver the real close reason.
+    if timeout(Duration::from_secs(2), &mut writer_task)
+        .await
+        .is_err()
+    {
+        writer_task.abort();
+        let _ = writer_task.await;
+    }
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
 }
@@ -637,6 +813,40 @@ if Instant::now()>=next_ping{let value=token().as_bytes()[..32].to_vec();*probe.
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn heartbeat_retries_do_not_reset_a_dead_peer_deadline() {
+        let now = Instant::now();
+        let mut heartbeat = Heartbeat::new(now);
+        assert!(heartbeat.ping(now).is_none());
+        let first = heartbeat.ping(now + PING_INTERVAL).unwrap();
+        assert_eq!(heartbeat.ping(now + PING_INTERVAL * 2).unwrap(), first);
+        assert!(!heartbeat.acknowledge(b"incorrect", now + PING_INTERVAL * 2));
+        assert!(!heartbeat.expired(now + PING_INTERVAL + PONG_TIMEOUT - Duration::from_secs(1)));
+        assert!(heartbeat.expired(now + PING_INTERVAL + PONG_TIMEOUT));
+        assert!(!heartbeat.acknowledge(&first, now + PING_INTERVAL + PONG_TIMEOUT));
+        assert!(heartbeat.ping(now + PING_INTERVAL + PONG_TIMEOUT).is_none());
+    }
+    #[test]
+    fn healthy_terminal_can_remain_idle_and_tolerates_a_late_pong() {
+        let now = Instant::now();
+        let mut heartbeat = Heartbeat::new(now);
+        let first = heartbeat.ping(now + PING_INTERVAL).unwrap();
+        assert!(heartbeat.acknowledge(&first, now + PING_INTERVAL + Duration::from_secs(12)));
+        assert!(!heartbeat.acknowledge(&first, now + PING_INTERVAL + Duration::from_secs(13)));
+        for second in (50..(24 * 3600)).step_by(25) {
+            let at = now + Duration::from_secs(second);
+            assert!(!heartbeat.expired(at));
+            let challenge = heartbeat.ping(at).unwrap();
+            assert!(heartbeat.acknowledge(&challenge, at + Duration::from_secs(1)));
+        }
+    }
+    #[test]
+    fn first_close_reason_is_preserved() {
+        let reason: EndReason = Arc::new(Mutex::new(None));
+        ended(&reason, "authorization_lost");
+        ended(&reason, "browser_connection_lost");
+        assert_eq!(*reason.lock().unwrap(), Some("authorization_lost"));
+    }
     #[test]
     fn removed_shell_resume_protocol_is_rejected() {
         let value = json!({"type":"authorize","ticket":"a".repeat(64),"resume":"b".repeat(64)});

@@ -86,7 +86,8 @@ pub async fn connect<T: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
         window_size: 256 * 1024,
         maximum_packet_size: 32 * 1024,
         channel_buffer_size: 16,
-        inactivity_timeout: Some(Duration::from_secs(660)),
+        // Liveness is enforced by SSH keepalives and the authenticated terminal owner.
+        inactivity_timeout: None,
         keepalive_interval: Some(Duration::from_secs(15)),
         keepalive_max: 3,
         ..Default::default()
