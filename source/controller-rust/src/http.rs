@@ -68,7 +68,13 @@ async fn api(
         }
         let max_body = if c.path == "/api/admin/ops/restore" {
             24 * 1024 * 1024
-        } else if c.path == "/api/admin/theme" || c.path == "/api/admin/theme/preview" {
+        } else if [
+            "/api/admin/theme",
+            "/api/admin/theme/preview",
+            "/api/admin/theme/import",
+        ]
+        .contains(&c.path.as_str())
+        {
             crate::theme::BODY_LIMIT
         } else {
             16384
@@ -134,6 +140,7 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
             crate::file_sessions::save(app, &i)?;
             Ok(ApiReply::session(i.info(&x), &x.id))
         }
+        ("/api/admin/theme/export", "GET") => crate::theme::export(app, &mut i, c),
         ("/api/public/theme", "GET") | ("/api/admin/theme", "GET") => crate::theme::read(&mut i),
         ("/api/public/nodes", "GET") => {
             let admin = i.session(&c.sid).is_some_and(|s| s.auth);

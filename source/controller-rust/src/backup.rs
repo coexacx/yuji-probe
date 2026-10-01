@@ -366,6 +366,7 @@ fn secret_rewrap(app: &App, key: &[u8], id: &str, s: &mut NodeSecret) -> ApiResu
     rewrap(app, key, &format!("{id}:recovery"), &mut s.recovery_key)
 }
 fn restore(app: &App, i: &mut Inner, mut b: Bundle) -> ApiResult<bool> {
+    b.data.theme.migrate_removed();
     b.data.theme.validate()?;
     let master = Zeroizing::new(
         STANDARD

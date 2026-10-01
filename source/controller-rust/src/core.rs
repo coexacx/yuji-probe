@@ -386,7 +386,11 @@ impl App {
             read_json(&dir.join("auth.json")).map_err(|_| "authentication state unavailable")?;
         let mut data: Data =
             read_json(&dir.join("nodes.json")).map_err(|_| "node state unavailable")?;
+        let theme_migrated = data.theme.migrate_removed();
         data.theme.validate().map_err(|_| "theme state invalid")?;
+        if theme_migrated {
+            atomic_json(&dir.join("nodes.json"), &data).map_err(|_| "theme migration failed")?;
+        }
         if data.nodes.len() > 200 || data.commands.len() > 50 {
             return Err("state limits exceeded");
         }

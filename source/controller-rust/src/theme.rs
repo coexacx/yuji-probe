@@ -3,7 +3,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use image::{DynamicImage, ImageFormat, ImageReader, Limits};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{io::Cursor, sync::Arc};
+use std::{collections::BTreeMap, io::Cursor, sync::Arc};
 use tokio::sync::Semaphore;
 
 pub const BODY_LIMIT: usize = 3 * 1024 * 1024;
@@ -17,6 +17,132 @@ pub struct ThemeImage {
     pub mime: String,
     pub data: String,
 }
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Palette {
+    pub light: BTreeMap<String, String>,
+    pub dark: BTreeMap<String, String>,
+}
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PackageInfo {
+    pub id: String,
+    pub name: String,
+    pub author: String,
+    pub version: String,
+    pub description: String,
+    pub license: String,
+}
+impl PackageInfo {
+    fn validate(&self) -> ApiResult<()> {
+        let slug = !self.id.is_empty()
+            && self.id.len() <= 48
+            && self
+                .id
+                .bytes()
+                .next()
+                .is_some_and(|b| b.is_ascii_lowercase())
+            && self
+                .id
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+        let version = !self.version.is_empty()
+            && self.version.len() <= 32
+            && self
+                .version
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b".+-".contains(&b));
+        if !slug
+            || !version
+            || self.name.trim().is_empty()
+            || self.name.chars().count() > 48
+            || self.author.chars().count() > 80
+            || self.description.chars().count() > 400
+            || self.license.len() > 80
+            || [&self.name, &self.author, &self.description, &self.license]
+                .iter()
+                .any(|s| s.chars().any(char::is_control))
+        {
+            return Err(bad("主题名称、标识、版本或作者信息不正确"));
+        }
+        Ok(())
+    }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ThemePackage {
+    format: String,
+    schema_version: u32,
+    metadata: PackageInfo,
+    theme: Theme,
+}
+impl ThemePackage {
+    fn into_theme(self, revision: &str) -> ApiResult<Theme> {
+        if self.format != "yuji-theme" || self.schema_version != 1 {
+            return Err(bad("请选择格式版本为 1 的羽迹主题包"));
+        }
+        self.metadata.validate()?;
+        if !self.theme.revision.is_empty() || self.theme.package.is_some() {
+            return Err(bad("主题包不能包含运行中的版本或嵌套主题信息"));
+        }
+        Ok(Theme {
+            revision: revision.into(),
+            package: Some(self.metadata),
+            ..self.theme
+        })
+    }
+}
+const PALETTE_TOKENS: &[(&str, &str, bool)] = &[
+    ("bg", "--bg", false),
+    ("text", "--text", true),
+    ("muted", "--muted", true),
+    ("quiet", "--quiet", true),
+    ("glass", "--glass", false),
+    ("glassStrong", "--glass-strong", false),
+    ("inset", "--inset", false),
+    ("inputBg", "--input-bg", false),
+    ("edge", "--edge", false),
+    ("line", "--line", false),
+    ("accent", "--accent", true),
+    ("accentWash", "--accent-wash", false),
+    ("track", "--track", false),
+    ("dialog", "--dialog", false),
+    ("chart", "--chart", true),
+    ("focus", "--focus", true),
+    ("terminalSurface", "--terminal-surface", false),
+    ("buttonColor", "--theme-button-color", true),
+    ("buttonText", "--theme-button-text", true),
+];
+impl Palette {
+    fn stylesheet(&self) -> ApiResult<String> {
+        let mut result = String::new();
+        for (mode, values) in [("light", &self.light), ("dark", &self.dark)] {
+            if values.len() > PALETTE_TOKENS.len() {
+                return Err(bad("主题配色项过多"));
+            }
+            let mut declarations = String::new();
+            for (key, value) in values {
+                let Some((_, property, opaque)) =
+                    PALETTE_TOKENS.iter().find(|(name, _, _)| *name == key)
+                else {
+                    return Err(bad("主题使用了不支持的配色项"));
+                };
+                if !color(value, if *opaque { &[3, 6] } else { &[3, 6, 8] })
+                    && (*opaque || value != "transparent")
+                {
+                    return Err(bad("主题配色必须使用十六进制颜色，文字颜色不可透明"));
+                }
+                declarations.push_str(&format!("{property}:{value};"));
+            }
+            if !declarations.is_empty() {
+                result.push_str(&format!(
+                    "html[data-appearance][data-theme={mode}]{{{declarations}}}\n"
+                ));
+            }
+        }
+        Ok(result)
+    }
+}
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "camelCase")]
 pub struct Theme {
@@ -29,6 +155,8 @@ pub struct Theme {
     pub background_blur: u8,
     pub brand_icon: bool,
     pub custom_css: String,
+    pub palette: Palette,
+    pub package: Option<PackageInfo>,
 }
 impl Default for Theme {
     fn default() -> Self {
@@ -42,6 +170,8 @@ impl Default for Theme {
             background_blur: 0,
             brand_icon: true,
             custom_css: String::new(),
+            palette: Palette::default(),
+            package: None,
         }
     }
 }
@@ -206,10 +336,19 @@ fn normalize_image(value: &ThemeImage, icon: bool) -> ApiResult<ThemeImage> {
     })
 }
 impl Theme {
+    pub fn migrate_removed(&mut self) -> bool {
+        if self.preset != "alpine" {
+            return false;
+        }
+        self.preset = "seasons".into();
+        self.revision = token()[..32].into();
+        true
+    }
+    fn stylesheet(&self) -> ApiResult<String> {
+        Ok(self.palette.stylesheet()? + &css(&self.custom_css)?)
+    }
     pub fn fields(&self) -> ApiResult<()> {
-        if !["default", "clear", "sketch", "anime", "seasons", "alpine"]
-            .contains(&self.preset.as_str())
-        {
+        if !["default", "clear", "sketch", "anime", "seasons"].contains(&self.preset.as_str()) {
             return Err(bad("请选择可用主题"));
         }
         if !(self.accent.is_empty() || color(&self.accent, &[6])) {
@@ -222,6 +361,10 @@ impl Theme {
             || (self.revision.len() == 32 && self.revision.bytes().all(|c| c.is_ascii_hexdigit())))
         {
             return Err(bad("主题版本不正确"));
+        }
+        self.palette.stylesheet()?;
+        if let Some(metadata) = &self.package {
+            metadata.validate()?;
         }
         css(&self.custom_css)?;
         Ok(())
@@ -257,7 +400,7 @@ pub fn read(i: &mut Inner) -> ApiResult<ApiReply> {
         .as_ref()
         .is_none_or(|(revision, _)| revision != &i.data.theme.revision)
     {
-        let value = json!({"theme":i.data.theme,"css":css(&i.data.theme.custom_css)?});
+        let value = json!({"theme":i.data.theme,"css":i.data.theme.stylesheet()?});
         let raw = serde_json::to_vec(&value).map_err(|_| ApiError::internal())?;
         i.theme_cache = Some((i.data.theme.revision.clone(), Arc::from(raw)));
     }
@@ -267,7 +410,8 @@ pub fn read(i: &mut Inner) -> ApiResult<ApiReply> {
 }
 pub async fn change(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> {
     let preview = c.path == "/api/admin/theme/preview" && c.method == "POST";
-    if !preview && !(c.path == "/api/admin/theme" && c.method == "PUT") {
+    let importing = c.path == "/api/admin/theme/import" && c.method == "POST";
+    if !importing && !preview && !(c.path == "/api/admin/theme" && c.method == "PUT") {
         return Err(ApiError::new(405, "请求方法不正确"));
     }
     let old = {
@@ -275,7 +419,11 @@ pub async fn change(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> 
         app.guard(&mut i, &c, true, true)?;
         i.data.theme.clone()
     };
-    let input: Theme = decode(&body)?;
+    let input: Theme = if importing {
+        decode::<ThemePackage>(&body)?.into_theme(&old.revision)?
+    } else {
+        decode(&body)?
+    };
     if input.revision != old.revision {
         return Err(ApiError::new(
             409,
@@ -296,8 +444,8 @@ pub async fn change(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> 
     if value.revision != i.data.theme.revision {
         return Err(ApiError::new(409, "主题已更新，请重新打开主题设置"));
     }
-    let rules = css(&value.custom_css)?;
-    if !preview {
+    let rules = value.stylesheet()?;
+    if !preview && !importing {
         value.revision = token()[..32].into();
         let mut data = i.data.clone();
         data.theme = value.clone();
@@ -306,6 +454,25 @@ pub async fn change(app: App, c: Context, body: Vec<u8>) -> ApiResult<ApiReply> 
         app.record(&mut i, "theme_updated", &value.preset);
     }
     Ok(ApiReply::ok(json!({"theme":value,"css":rules})))
+}
+pub fn export(app: &App, i: &mut Inner, c: &Context) -> ApiResult<ApiReply> {
+    app.guard(i, c, true, false)?;
+    let mut theme = i.data.theme.clone();
+    let metadata = theme.package.take().unwrap_or(PackageInfo {
+        id: "custom-theme".into(),
+        name: "自定义主题".into(),
+        version: "1.0.0".into(),
+        ..Default::default()
+    });
+    theme.revision.clear();
+    let mut visual = serde_json::to_value(theme).map_err(|_| ApiError::internal())?;
+    if let Some(fields) = visual.as_object_mut() {
+        fields.remove("revision");
+        fields.remove("package");
+    }
+    Ok(ApiReply::ok(
+        json!({"format":"yuji-theme","schemaVersion":1,"metadata":metadata,"theme":visual}),
+    ))
 }
 #[cfg(test)]
 mod tests {
@@ -412,5 +579,103 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn package_schema_and_runtime_fields_are_checked() {
+        let base = json!({"format":"yuji-theme","schemaVersion":1,"metadata":{"id":"sample-theme","name":"示例","version":"1.0.0"},"theme":{}});
+        let load = |value| {
+            serde_json::from_value::<ThemePackage>(value)
+                .ok()
+                .and_then(|p| p.into_theme("12345678901234567890123456789012").ok())
+        };
+        let theme = load(base.clone()).unwrap();
+        assert_eq!(theme.revision, "12345678901234567890123456789012");
+        assert_eq!(theme.package.unwrap().id, "sample-theme");
+        for (pointer, value) in [
+            ("/format", json!("html")),
+            ("/schemaVersion", json!(2)),
+            ("/metadata/id", json!("../../auth")),
+            ("/metadata/id", json!("x;body")),
+            ("/metadata/version", json!("../config")),
+            ("/metadata/name", json!("")),
+        ] {
+            let mut bad = base.clone();
+            *bad.pointer_mut(pointer).unwrap() = value;
+            assert!(load(bad).is_none(), "{pointer}");
+        }
+        for (key, value) in [
+            ("revision", json!("12345678901234567890123456789012")),
+            ("package", base["metadata"].clone()),
+            ("script", json!("alert(1)")),
+        ] {
+            let mut bad = base.clone();
+            bad["theme"][key] = value;
+            assert!(load(bad).is_none(), "{key}");
+        }
+        let mut bad = base.clone();
+        bad["files"] = json!({"../auth.json":"overwritten"});
+        assert!(load(bad).is_none());
+    }
+    #[test]
+    fn palette_rejects_css_and_unsafe_tokens() {
+        let mut p = Palette::default();
+        p.light.insert("text".into(), "#234".into());
+        p.dark.insert("glass".into(), "#12345678".into());
+        let css = p.stylesheet().unwrap();
+        assert!(css.contains("--text:#234;"));
+        assert!(css.contains("[data-theme=dark]{--glass:#12345678;"));
+        for value in [
+            "transparent",
+            "#ffffff00",
+            "red",
+            "var(--x)",
+            "url(https://evil.invalid)",
+            "#fff;}body{display:none",
+            "</style>",
+        ] {
+            p.light.insert("text".into(), value.into());
+            assert!(p.stylesheet().is_err(), "{value}");
+        }
+        p.light.clear();
+        p.light.insert("credentialURL".into(), "#fff".into());
+        assert!(p.stylesheet().is_err());
+        p.light.clear();
+        p.light.insert("glass".into(), "transparent".into());
+        assert!(p.stylesheet().is_ok());
+    }
+    #[test]
+    fn removed_theme_migration_is_idempotent_and_retains_visual_settings() {
+        let mut old = Theme {
+            preset: "alpine".into(),
+            accent: "#336655".into(),
+            background_dim: 35,
+            ..Default::default()
+        };
+        assert!(old.fields().is_err());
+        assert!(old.migrate_removed());
+        assert_eq!(old.preset, "seasons");
+        assert_eq!(old.accent, "#336655");
+        assert_eq!(old.background_dim, 35);
+        assert_eq!(old.revision.len(), 32);
+        assert!(old.validate().is_ok());
+        let revision = old.revision.clone();
+        assert!(!old.migrate_removed());
+        assert_eq!(old.revision, revision);
+    }
+    #[test]
+    fn distributed_example_is_valid_and_can_round_trip() {
+        let package: ThemePackage = serde_json::from_str(include_str!(
+            "../../../docs/themes/waterside.yuji-theme.json"
+        ))
+        .unwrap();
+        let theme = package
+            .into_theme("")
+            .unwrap()
+            .normalize(&Theme::default())
+            .unwrap();
+        assert!(theme.validate().is_ok());
+        let restored: Theme = serde_json::from_slice(&serde_json::to_vec(&theme).unwrap()).unwrap();
+        assert!(restored.validate().is_ok());
+        assert_eq!(restored.stylesheet().unwrap(), theme.stylesheet().unwrap());
     }
 }

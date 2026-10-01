@@ -1,0 +1,128 @@
+{
+  "version": "0.9.0",
+  "browser": "Chrome 153.0.8010.36 headless; software rendering",
+  "profiles": {
+    "desktop": "1440x1000",
+    "mobile": "390x844 viewport emulation; not a phone hardware test"
+  },
+  "cards": 13,
+  "before": [
+    {
+      "profile": "desktop",
+      "seconds": 8.0163,
+      "frames": 407,
+      "pageFPS": 50.771552960842286,
+      "animationUpdatesPerSecond": 0.997966642964959,
+      "p95FrameMS": 16.80000000000109,
+      "longFrames": 14,
+      "errors": []
+    },
+    {
+      "profile": "mobile",
+      "seconds": 8.0163,
+      "frames": 450,
+      "pageFPS": 56.13562366677894,
+      "animationUpdatesPerSecond": 0.997966642964959,
+      "p95FrameMS": 16.800000000000182,
+      "longFrames": 12,
+      "errors": []
+    }
+  ],
+  "after": [
+    {
+      "profile": "desktop",
+      "seconds": 8.016399999999999,
+      "frames": 464,
+      "pageFPS": 57.881343246345,
+      "animationUpdatesPerSecond": 57.881343246345,
+      "p95FrameMS": 16.800000000000182,
+      "longFrames": 6,
+      "errors": []
+    },
+    {
+      "profile": "mobile",
+      "seconds": 8.0163,
+      "frames": 469,
+      "pageFPS": 58.50579444382072,
+      "animationUpdatesPerSecond": 58.50579444382072,
+      "p95FrameMS": 16.700000000000728,
+      "longFrames": 4,
+      "errors": []
+    }
+  ],
+  "transition": {
+    "fps": 58.955188342302016,
+    "p95FrameMS": 16.799999999995634,
+    "measuredSeconds": 10.4995,
+    "frames": 619,
+    "canvases": 1,
+    "season": "1"
+  },
+  "load": {
+    "requests": 15078,
+    "errors": 0,
+    "successRPS": 745.2514599132462,
+    "successLatencyMS": {
+      "max": 450.568022,
+      "p50": 260.790286,
+      "p95": 343.407668,
+      "p99": 398.64892
+    },
+    "finalOnline": 200,
+    "finalLatestMatched": 200,
+    "resources": {
+      "controller": {
+        "sampledSeconds": 19.637194871902466,
+        "cpuPercentOneCore": 42.047166379217515,
+        "cpuSeconds": 8.256884,
+        "rssMeanMiB": 19.16138980263158,
+        "rssPeakMiB": 19.39453125,
+        "pssMeanMiB": 16.44274259868421,
+        "pssPeakMiB": 16.67578125,
+        "peakCgroupMiB": 13.953125,
+        "throttledSeconds": 0.0,
+        "maxThreads": 6,
+        "oomKills": 0
+      },
+      "php": {
+        "sampledSeconds": 19.637194871902466,
+        "cpuPercentOneCore": 93.65740942111555,
+        "cpuSeconds": 18.391688,
+        "rssMeanMiB": 205.11903782894737,
+        "rssPeakMiB": 205.12890625,
+        "pssMeanMiB": 29.01870888157895,
+        "pssPeakMiB": 29.4169921875,
+        "peakCgroupMiB": 27.50390625,
+        "throttledSeconds": 12.338977,
+        "maxThreads": 9,
+        "oomKills": 0
+      },
+      "nginx": {
+        "sampledSeconds": 19.637194871902466,
+        "cpuPercentOneCore": 47.45113067718545,
+        "cpuSeconds": 9.318071,
+        "rssMeanMiB": 40.19860197368421,
+        "rssPeakMiB": 40.49609375,
+        "pssMeanMiB": 26.640702097039473,
+        "pssPeakMiB": 27.0302734375,
+        "peakCgroupMiB": 32.203125,
+        "throttledSeconds": 2.329481,
+        "maxThreads": 2,
+        "oomKills": 0
+      },
+      "load": {
+        "sampledSeconds": 19.637194871902466,
+        "cpuPercentOneCore": 43.44567060444648,
+        "cpuSeconds": 8.531511,
+        "rssMeanMiB": 56.32103207236842,
+        "rssPeakMiB": 59.30859375,
+        "pssMeanMiB": 54.84423828125,
+        "pssPeakMiB": 57.833984375,
+        "peakCgroupMiB": 65.359375,
+        "throttledSeconds": 0.0,
+        "maxThreads": 8,
+        "oomKills": 0
+      }
+    }
+  }
+}

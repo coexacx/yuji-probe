@@ -28,12 +28,12 @@ test('invalid clock readings cannot escape the four bounded seasons',()=>{
 });
 test('default and unknown terminal themes retain the original opaque palette',()=>{
  const old={background:'#121b29',foreground:'#dce6f0',cursor:'#b9dbef',selectionBackground:'#406584'};
- for(const name of ['default',undefined,'untrusted'])assert.deepEqual(terminalAppearance({dataset:{appearance:name}}),old);
+ for(const name of ['default','alpine',undefined,'untrusted'])assert.deepEqual(terminalAppearance({dataset:{appearance:name}}),old);
 });
 test('custom terminal palettes use transparent backgrounds in light and dark modes',()=>{
  const previous=globalThis.getComputedStyle;
  globalThis.getComputedStyle=root=>({getPropertyValue:name=>name==='--text'?(root.dataset.theme==='dark'?'#e7f0e6':'#203b35'):'#376956'});
- try{for(const name of ['clear','sketch','anime','seasons','alpine'])for(const mode of ['light','dark']){
+ try{for(const name of ['clear','sketch','anime','seasons'])for(const mode of ['light','dark']){
   const t=terminalAppearance({dataset:{appearance:name,theme:mode}});
   assert.equal(t.background,'#00000000');assert.equal(t.cursor,'#376956');
   assert.equal(t.foreground,mode==='dark'?'#e7f0e6':'#203b35');assert.match(t.green,/^#[0-9a-f]{6}$/);assert.match(t.selectionBackground,/^#[0-9a-f]{8}$/);
@@ -46,4 +46,11 @@ test('seasonal metric colors join continuously and keep dark-mode contrast',()=>
   assert.match(start,/^#[0-9a-f]{6}$/);assert.notEqual(start,end);
   assert.equal(end,seasonMetricColor({index:next,next:(next+1)%4,blend:0},dark));
  }
+});
+
+test('uploaded themes based on default also style the terminal',()=>{
+ const previous=globalThis.getComputedStyle;
+ globalThis.getComputedStyle=()=>({getPropertyValue:name=>name==='--text'?'#234567':'#336699'});
+ try{const value=terminalAppearance({dataset:{appearance:'default',themePackage:'sample'}});assert.equal(value.background,'#00000000');assert.equal(value.foreground,'#234567');}
+ finally{globalThis.getComputedStyle=previous;}
 });

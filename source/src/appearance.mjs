@@ -1,13 +1,13 @@
-const presets=new Set(['default','clear','sketch','anime','seasons','alpine']);
+const presets=new Set(['default','clear','sketch','anime','seasons']);
 let epoch=0,saved=null,shown=null,inflight=null,previewing=false,urls={background:null,favicon:null},imageKeys={},brandOriginal=null;
 const root=document.documentElement;
 let scenery=null,sceneryEpoch=0,sceneryKind='';
 function sceneryFor(preset){
- const kind=['seasons','alpine'].includes(preset)?preset:'',epoch=++sceneryEpoch;
+ const kind=preset==='seasons'?preset:'',epoch=++sceneryEpoch;
  layer.classList.toggle('has-season-scene',!!kind);
  if(kind!==sceneryKind){scenery?.destroy();scenery=null;sceneryKind=kind;}
  if(kind&&!scenery)import('./seasons.mjs').then(({mountSeasons})=>{
-  if(epoch===sceneryEpoch&&root.dataset.appearance===kind&&!scenery)scenery=mountSeasons(layer,{kind});
+  if(epoch===sceneryEpoch&&root.dataset.appearance===kind&&!scenery)scenery=mountSeasons(layer);
  }).catch(()=>{});
 }
 const style=document.createElement('style');style.id='appearance-overrides';document.head.append(style);
@@ -21,7 +21,7 @@ function blobURL(value,key){
 }
 function luminance(rgb){return rgb.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);}
 function colors(){
- const t=shown?.theme;for(const v of ['--accent','--accent-wash','--focus','--chart','--theme-button-color','--theme-button-text'])root.style.removeProperty(v);
+ const t=shown?.theme;root.classList.toggle('has-package-background-color',!!(t?.package&&t?.palette?.[root.dataset.theme==='dark'?'dark':'light']?.bg));for(const v of ['--accent','--accent-wash','--focus','--chart','--theme-button-color','--theme-button-text'])root.style.removeProperty(v);
  if(!t||!/^#[0-9a-f]{6}$/i.test(t.accent))return;
  const rgb=[1,3,5].map(n=>parseInt(t.accent.slice(n,n+2),16)),dark=root.dataset.theme==='dark';let text=rgb.slice();
  const background=dark?.035:.88;
@@ -33,9 +33,9 @@ function colors(){
 }
 function apply(doc){
  if(!doc?.theme)return;shown=doc;const t=doc.theme;
- root.dataset.appearance=presets.has(t.preset)?t.preset:'default';
+ root.dataset.themePackage=t.package?.id||'';root.dataset.appearance=presets.has(t.preset)?t.preset:'default';
  sceneryFor(t.preset);
- const background=blobURL(['seasons','alpine'].includes(t.preset)?null:t.background,'background');root.classList.toggle('has-theme-background',!!background);
+ const background=blobURL(['seasons'].includes(t.preset)?null:t.background,'background');root.classList.toggle('has-theme-background',!!background);
  layer.style.setProperty('--theme-image',background?'url("'+background+'")':'none');layer.style.setProperty('--theme-dim',String(Math.min(85,Math.max(0,t.backgroundDim??20))/100));layer.style.setProperty('--theme-blur',Math.min(24,Math.max(0,t.backgroundBlur??0))+'px');
  const favicon=blobURL(t.favicon,'favicon'),link=document.querySelector('link[rel=icon]');link.href=favicon||'/favicon.svg';link.type=favicon?t.favicon.mime:'image/svg+xml';
  const mark=document.querySelector('.brand-mark');if(!brandOriginal)brandOriginal=mark.firstElementChild.cloneNode(true);

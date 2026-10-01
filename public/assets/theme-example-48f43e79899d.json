@@ -1,0 +1,60 @@
+{
+  "format": "yuji-theme",
+  "schemaVersion": 1,
+  "metadata": {
+    "id": "waterside",
+    "name": "水岸",
+    "author": "羽迹探针社区",
+    "version": "1.0.0",
+    "description": "浅青色卡片与柔和的深色界面。",
+    "license": "MIT"
+  },
+  "theme": {
+    "preset": "clear",
+    "accent": "",
+    "background": null,
+    "favicon": null,
+    "backgroundDim": 20,
+    "backgroundBlur": 0,
+    "brandIcon": true,
+    "palette": {
+      "light": {
+        "bg": "#e7eeeb",
+        "text": "#233c35",
+        "muted": "#50685f",
+        "quiet": "#5c7169",
+        "glass": "#fafffb38",
+        "glassStrong": "#f8fffaad",
+        "edge": "#ffffffbf",
+        "line": "#54756833",
+        "accent": "#2f7162",
+        "chart": "#2f7162",
+        "focus": "#2f7162",
+        "inputBg": "#ffffff80",
+        "dialog": "#eff8f2ed",
+        "terminalSurface": "#eef8f0cc",
+        "buttonColor": "#2f7162",
+        "buttonText": "#ffffff"
+      },
+      "dark": {
+        "bg": "#172821",
+        "text": "#e2eee5",
+        "muted": "#b8cdc0",
+        "quiet": "#a7bdb0",
+        "glass": "#172c2373",
+        "glassStrong": "#1e352bcc",
+        "edge": "#b3d4be40",
+        "line": "#9dc6ae30",
+        "accent": "#b3dbc2",
+        "chart": "#b3dbc2",
+        "focus": "#b3dbc2",
+        "inputBg": "#0d201780",
+        "dialog": "#1b3026ed",
+        "terminalSurface": "#12281dcc",
+        "buttonColor": "#b3dbc2",
+        "buttonText": "#183827"
+      }
+    },
+    "customCss": ".server-card { border-radius: 20px; border-width: 1px; }\n.node-title { font-weight: 600; }\n.admin-box { border-radius: 20px; }"
+  }
+}
