@@ -1,8 +1,10 @@
 use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
+use serde::{Deserialize, Serialize};
+use sha2::digest::common::hazmat::{SerializableState, SerializedState};
 use std::time::Instant;
-pub(super) const MAX_TRANSFER: u64 = 128 * 1024 * 1024;
-pub(super) const CHUNK: usize = 64 * 1024;
+pub(super) const MAX_TRANSFER: u64 = 2 * 1024 * 1024 * 1024;
+pub(super) const CHUNK: usize = 128 * 1024;
 
 pub(super) struct Transfer {
     id: String,
@@ -41,10 +43,14 @@ pub(super) fn action(s: &str) -> bool {
             | "transfer_cancel"
             | "download_start"
             | "download_chunk"
+            | "download_finish"
+            | "transfer_resume"
+            | "transfer_list"
+            | "transfer_pause"
     )
 }
 pub(super) fn chunk(s: &str) -> bool {
-    matches!(s, "upload_chunk" | "download_chunk")
+    matches!(s, "upload_chunk" | "download_chunk" | "download_finish")
 }
 fn basename(s: &str) -> bool {
     !s.is_empty()
@@ -68,7 +74,7 @@ fn ordinary(a: &FileAttributes) -> Result<u64, Problem> {
     }
     a.size
         .filter(|v| *v <= MAX_TRANSFER)
-        .ok_or_else(|| error("limit", "单个传输文件最多 128 MiB"))
+        .ok_or_else(|| error("limit", "单个传输文件最多 2 GiB"))
 }
 async fn missing(c: &Sftp, path: &str) -> Result<(), Problem> {
     match c.raw.lstat(path).await {
@@ -105,6 +111,7 @@ async fn child(c: &Sftp, parent: &str, name: &str) -> Result<String, Problem> {
 }
 pub(super) async fn cleanup(files: &mut Files) {
     if let Some(mut t) = files.transfer.take() {
+        let _ = std::fs::remove_file(checkpoint_path(&files.app, &t.id));
         if !t.handle.is_empty() {
             let _ = timeout(Duration::from_secs(2), t.sftp.raw.close(&t.handle)).await;
             t.handle.clear();
@@ -125,11 +132,43 @@ pub(super) async fn expire(files: &mut Files) {
         .as_ref()
         .is_some_and(|t| t.touched.elapsed() > Duration::from_secs(60))
     {
-        cleanup(files).await;
+        park(files).await;
     }
 }
 pub(super) async fn handle(files: &mut Files, r: &Request) -> Result<Value, Problem> {
     expire(files).await;
+    if r.action == "transfer_list" {
+        let mut list = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(files.app.0.dir.join("transfers")) {
+            for entry in entries.flatten().take(128) {
+                let id = entry
+                    .file_name()
+                    .to_string_lossy()
+                    .trim_end_matches(".json")
+                    .to_string();
+                if let Ok(v) = checkpoint_read(files, &id) {
+                    list.push(describe(&v));
+                }
+            }
+        }
+        return Ok(json!({"transfers":list}));
+    }
+    if r.action == "transfer_resume" {
+        return resume(files, r).await;
+    }
+    if r.action == "transfer_pause" {
+        park(files).await;
+        return Ok(json!({"paused":true}));
+    }
+    if r.action == "transfer_cancel" && files.transfer.as_ref().is_none_or(|t| t.id != r.transfer) {
+        let v = checkpoint_read(files, &r.transfer)?;
+        if v.upload {
+            let c = Sftp::open(&files.client).await?;
+            c.raw.remove(&v.temporary).await?;
+        }
+        let _ = std::fs::remove_file(checkpoint_path(&files.app, &v.id));
+        return Ok(json!({"cancelled":true}));
+    }
     if matches!(r.action.as_str(), "mkdir" | "rename") {
         let c = Sftp::open(&files.client).await?;
         if r.action == "mkdir" {
@@ -189,7 +228,13 @@ pub(super) async fn handle(files: &mut Files, r: &Request) -> Result<Value, Prob
         if files.transfer.is_some() {
             return Err(error("busy", "当前会话已有文件传输，请完成或取消后继续"));
         }
-        let c = Sftp::open_limit(&files.client, MAX_TRANSFER as usize + 2 * 1024 * 1024).await?;
+        let count = std::fs::read_dir(files.app.0.dir.join("transfers"))
+            .map(|r| r.take(65).count())
+            .unwrap_or(0);
+        if count >= 64 {
+            return Err(error("limit", "续传队列已满，请清理不用的传输"));
+        }
+        let c = Sftp::open_limit(&files.client, MAX_TRANSFER as usize + 8 * 1024 * 1024).await?;
         let upload = r.action == "upload_start";
         let id = token();
         let (path, handle, size, initial, temporary, held) = if upload {
@@ -257,6 +302,11 @@ pub(super) async fn handle(files: &mut Files, r: &Request) -> Result<Value, Prob
             temporary,
             _lock: held,
         });
+        let v = snapshot(files, files.transfer.as_ref().unwrap());
+        if let Err(e) = checkpoint_write(&files.app, &v) {
+            cleanup(files).await;
+            return Err(e);
+        }
         return Ok(answer);
     }
     let t = files
@@ -269,6 +319,11 @@ pub(super) async fn handle(files: &mut Files, r: &Request) -> Result<Value, Prob
         cleanup(files).await;
         return Ok(json!({"cancelled":true}));
     }
+    if r.action == "download_chunk" && !t.upload && r.offset as u64 == t.offset {
+        let v = snapshot(files, files.transfer.as_ref().unwrap());
+        checkpoint_write(&files.app, &v)?;
+    }
+    let t = files.transfer.as_mut().unwrap();
     if r.offset as u64 != t.offset {
         return Err(error("conflict", "传输位置不一致，请重新开始"));
     }
@@ -290,7 +345,10 @@ pub(super) async fn handle(files: &mut Files, r: &Request) -> Result<Value, Prob
         }
         t.hash.update(&bytes);
         t.offset += bytes.len() as u64;
-        return Ok(json!({"offset":t.offset,"size":t.size}));
+        let reply = json!({"offset":t.offset,"size":t.size,"sha256":hex::encode(t.hash.clone().finalize())});
+        let v = snapshot(files, files.transfer.as_ref().unwrap());
+        checkpoint_write(&files.app, &v)?;
+        return Ok(reply);
     }
     if r.action == "upload_finish" {
         if !t.upload || t.offset != t.size {
@@ -298,6 +356,15 @@ pub(super) async fn handle(files: &mut Files, r: &Request) -> Result<Value, Prob
         }
         if !(files.authorized)() {
             return Err(error("session", "管理会话已失效"));
+        }
+        if !constant(&r.revision, &hex::encode(t.hash.clone().finalize())) {
+            return Err(error("conflict", "上传校验失败"));
+        }
+        if !constant(
+            &remote_digest(&files.client, &t.temporary.as_ref().unwrap().path, t.size).await?,
+            &r.revision,
+        ) {
+            return Err(error("conflict", "远端文件校验失败"));
         }
         if t.sftp.raw.fstat(&t.handle).await?.attrs.size != Some(t.size) {
             return Err(error("conflict", "远端文件大小不一致"));
@@ -313,11 +380,22 @@ pub(super) async fn handle(files: &mut Files, r: &Request) -> Result<Value, Prob
         temp.committed = true;
         let reply =
             json!({"path":t.path,"size":t.size,"sha256":hex::encode(t.hash.clone().finalize())});
+        let _ = std::fs::remove_file(checkpoint_path(&files.app, &t.id));
         files.transfer.take();
         files
             .app
             .record(&mut files.app.lock(), "file_uploaded", &files.name);
         return Ok(reply);
+    }
+    if r.action == "download_finish" {
+        if t.upload
+            || t.offset != t.size
+            || !constant(&r.revision, &hex::encode(t.hash.clone().finalize()))
+        {
+            return Err(error("conflict", "下载校验失败"));
+        }
+        cleanup(files).await;
+        return Ok(json!({"ok":true}));
     }
     if r.action == "download_chunk" {
         if t.upload {
@@ -352,13 +430,7 @@ pub(super) async fn handle(files: &mut Files, r: &Request) -> Result<Value, Prob
                 return Err(error("conflict", "文件在下载期间发生变化，请重试"));
             }
         }
-        let reply = json!({"content":STANDARD.encode(&bytes),"offset":t.offset,"done":done,"sha256":if done {hex::encode(t.hash.clone().finalize())}else{String::new()}});
-        if done {
-            cleanup(files).await;
-            files
-                .app
-                .record(&mut files.app.lock(), "file_downloaded", &files.name);
-        }
+        let reply = json!({"content":STANDARD.encode(&bytes),"offset":t.offset,"done":done,"sha256":hex::encode(t.hash.clone().finalize())});
         return Ok(reply);
     }
     Err(error("invalid", "文件传输操作不正确"))
@@ -384,6 +456,319 @@ mod tests {
                 permissions: Some(0o100600),
                 size: Some(MAX_TRANSFER + 1),
                 ..Default::default()
+            })
+            .is_err()
+        );
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Checkpoint {
+    id: String,
+    node: String,
+    session: String,
+    version: String,
+    path: String,
+    temporary: String,
+    upload: bool,
+    size: u64,
+    offset: u64,
+    mtime: Option<u32>,
+    permissions: Option<u32>,
+    hash: String,
+    state: String,
+    touched: i64,
+}
+fn checkpoint_path(app: &App, id: &str) -> std::path::PathBuf {
+    app.0.dir.join("transfers").join(format!("{id}.json"))
+}
+fn snapshot(files: &Files, t: &Transfer) -> Checkpoint {
+    Checkpoint {
+        id: t.id.clone(),
+        node: files.node.clone(),
+        session: files.retained.clone(),
+        version: files.app.lock().auth.version.clone(),
+        path: t.path.clone(),
+        temporary: t
+            .temporary
+            .as_ref()
+            .map(|v| v.path.clone())
+            .unwrap_or_default(),
+        upload: t.upload,
+        size: t.size,
+        offset: t.offset,
+        mtime: t.initial.mtime,
+        permissions: t.initial.permissions,
+        hash: hex::encode(t.hash.clone().finalize()),
+        state: STANDARD.encode(t.hash.serialize()),
+        touched: now(),
+    }
+}
+fn checkpoint_write(app: &App, v: &Checkpoint) -> Result<(), Problem> {
+    let dir = app.0.dir.join("transfers");
+    std::fs::create_dir_all(&dir).map_err(|_| error("storage", "无法保存续传状态"))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+        .map_err(|_| error("storage", "无法保护续传状态"))?;
+    atomic_json(&checkpoint_path(app, &v.id), v).map_err(|_| error("storage", "无法保存续传状态"))
+}
+fn checkpoint_read(files: &Files, id: &str) -> Result<Checkpoint, Problem> {
+    if !crate::retained::valid(id) {
+        return Err(error("missing", "续传记录不存在"));
+    }
+    let v: Checkpoint = read_json(&checkpoint_path(&files.app, id))
+        .map_err(|_| error("missing", "续传记录不存在"))?;
+    if v.node != files.node
+        || v.session != files.retained
+        || v.version != files.app.lock().auth.version
+        || now() - v.touched > 86400
+        || !valid_path(&v.path)
+        || v.offset > v.size
+        || v.size > MAX_TRANSFER
+        || v.id != id
+    {
+        return Err(error("permission", "续传记录已失效或不属于当前会话"));
+    }
+    if v.upload {
+        let expected = format!(
+            "{}/.probe-upload-{}",
+            v.path.rsplit_once('/').unwrap().0,
+            &id[..24]
+        );
+        if v.temporary != expected {
+            return Err(error("invalid", "续传路径不正确"));
+        }
+    }
+    Ok(v)
+}
+fn describe(v: &Checkpoint) -> Value {
+    json!({"transfer":v.id,"path":v.path,"name":v.path.rsplit('/').next().unwrap_or("download"),"upload":v.upload,"size":v.size,"offset":v.offset,"sha256":v.hash,"chunkSize":CHUNK})
+}
+pub(super) async fn park(files: &mut Files) {
+    if let Some(mut t) = files.transfer.take() {
+        // Checkpoints already represent acknowledged writes; never delete their partial file.
+        if let Some(tmp) = t.temporary.as_mut() {
+            tmp.committed = true;
+        }
+        if !t.handle.is_empty() {
+            let _ = timeout(Duration::from_secs(2), t.sftp.raw.close(&t.handle)).await;
+            t.handle.clear();
+        }
+    }
+}
+async fn remote_digest(client: &ssh::Client, path: &str, length: u64) -> Result<String, Problem> {
+    let py = r#"import os,sys,hashlib,stat
+fd=os.open(sys.argv[1],os.O_RDONLY|os.O_NOFOLLOW)
+with os.fdopen(fd,'rb') as f:
+ a=os.fstat(f.fileno());n=int(sys.argv[2])
+ if not stat.S_ISREG(a.st_mode) or a.st_size<n:raise RuntimeError('changed')
+ h=hashlib.sha256()
+ while n:
+  b=f.read(min(n,1048576))
+  if not b:raise RuntimeError('short read')
+  n-=len(b);h.update(b)
+ b=os.fstat(f.fileno())
+ if (a.st_size,a.st_mtime_ns,a.st_ctime_ns)!=(b.st_size,b.st_mtime_ns,b.st_ctime_ns):raise RuntimeError('changed')
+ print(h.hexdigest())
+"#;
+    let result = ssh::exec(
+        client,
+        &format!(
+            "python3 -c {} {} {}",
+            ssh::quote(py),
+            ssh::quote(path),
+            length
+        ),
+        &[],
+        4096,
+    )
+    .await
+    .map_err(|_| error("conflict", "远端文件校验失败，请重新开始"))?;
+    let s = result.trim();
+    if !crate::retained::valid(s) {
+        return Err(error("conflict", "远端校验结果不正确"));
+    }
+    Ok(s.into())
+}
+async fn resume(files: &mut Files, r: &Request) -> Result<Value, Problem> {
+    if files.transfer.is_some() {
+        park(files).await;
+    }
+    let v = checkpoint_read(files, &r.transfer)?;
+    if !constant(&v.hash, &r.revision) {
+        return Err(error(
+            "conflict",
+            "已传输内容校验不一致，请选择原文件或重新下载",
+        ));
+    }
+    let c = Sftp::open_limit(&files.client, MAX_TRANSFER as usize + 8 * 1024 * 1024).await?;
+    let source = if v.upload { &v.temporary } else { &v.path };
+    let a = c.raw.lstat(source).await?.attrs;
+    ordinary(&a)?;
+    if (!v.upload && (a.size != Some(v.size) || a.mtime != v.mtime))
+        || a.size.is_none_or(|s| s < v.offset)
+    {
+        return Err(error("conflict", "远端文件已经变化，请重新开始"));
+    }
+    if !constant(
+        &remote_digest(&files.client, source, v.offset).await?,
+        &v.hash,
+    ) {
+        return Err(error("conflict", "远端已传输内容发生变化，已阻止续传"));
+    }
+    let held = if v.upload {
+        Some(lock(files, &v.path)?)
+    } else {
+        None
+    };
+    if v.upload {
+        missing(&c, &v.path).await?;
+    }
+    let handle = c
+        .raw
+        .open(
+            source,
+            if v.upload {
+                OpenFlags::WRITE
+            } else {
+                OpenFlags::READ
+            },
+            FileAttributes::default(),
+        )
+        .await?
+        .handle;
+    if v.upload && a.size != Some(v.offset) {
+        c.raw
+            .fsetstat(
+                &handle,
+                FileAttributes {
+                    size: Some(v.offset),
+                    ..Default::default()
+                },
+            )
+            .await?;
+    }
+    let raw = STANDARD
+        .decode(&v.state)
+        .map_err(|_| error("invalid", "续传状态损坏"))?;
+    let state = SerializedState::<Sha256>::try_from(raw.as_slice())
+        .map_err(|_| error("invalid", "续传状态损坏"))?;
+    let hash = Sha256::deserialize(&state).map_err(|_| error("invalid", "续传状态损坏"))?;
+    if !constant(&hex::encode(hash.clone().finalize()), &v.hash) {
+        return Err(error("invalid", "续传校验状态损坏"));
+    }
+    let temp = if v.upload {
+        Some(Temporary {
+            raw: c.raw.clone(),
+            path: v.temporary.clone(),
+            committed: false,
+        })
+    } else {
+        None
+    };
+    let reply = describe(&v);
+    files.transfer = Some(Transfer {
+        id: v.id,
+        sftp: c,
+        handle,
+        path: v.path,
+        upload: v.upload,
+        size: v.size,
+        offset: v.offset,
+        initial: a,
+        hash,
+        touched: Instant::now(),
+        temporary: temp,
+        _lock: held,
+    });
+    Ok(reply)
+}
+pub(crate) async fn remove_session(app: &App, session: &str, client: &ssh::Client) -> bool {
+    let entries = match std::fs::read_dir(app.0.dir.join("transfers")) {
+        Ok(entries) => entries,
+        Err(e) => return e.kind() == std::io::ErrorKind::NotFound,
+    };
+    let mut cleaned = true;
+    for entry in entries.flatten().take(128) {
+        let Ok(v) = read_json::<Checkpoint>(&entry.path()) else {
+            continue;
+        };
+        if v.session != session || !crate::retained::valid(&v.id) || !valid_path(&v.path) {
+            continue;
+        }
+        if v.upload {
+            let expected = format!(
+                "{}/.probe-upload-{}",
+                v.path.rsplit_once('/').unwrap().0,
+                &v.id[..24]
+            );
+            if v.temporary != expected {
+                cleaned = false;
+                continue;
+            }
+            let removed = async {
+                let c = Sftp::open(client).await?;
+                match c.raw.remove(&expected).await {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        let problem: Problem = e.into();
+                        if problem.code == "missing" {
+                            Ok(())
+                        } else {
+                            Err(problem)
+                        }
+                    }
+                }
+            };
+            if !matches!(timeout(Duration::from_secs(3), removed).await, Ok(Ok(()))) {
+                // Keep ownership metadata until remote deletion succeeds.
+                cleaned = false;
+                continue;
+            }
+        }
+        if std::fs::remove_file(entry.path()).is_err() {
+            cleaned = false;
+        }
+    }
+    cleaned
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    #[test]
+    fn persisted_hash_state_roundtrips_at_arbitrary_offsets() {
+        let input = vec![0xa5; 3 * CHUNK + 17];
+        for cut in [0, 1, 63, 64, 65, CHUNK, CHUNK + 3, input.len()] {
+            let mut first = Sha256::new();
+            first.update(&input[..cut]);
+            let encoded = STANDARD.encode(first.serialize());
+            let raw = STANDARD.decode(encoded).unwrap();
+            let saved = SerializedState::<Sha256>::try_from(raw.as_slice()).unwrap();
+            let mut resumed = Sha256::deserialize(&saved).unwrap();
+            resumed.update(&input[cut..]);
+            assert_eq!(resumed.finalize(), Sha256::digest(&input));
+        }
+    }
+    #[test]
+    fn file_size_and_mode_limits_are_exact() {
+        let attrs = FileAttributes {
+            permissions: Some(0o100600),
+            size: Some(MAX_TRANSFER),
+            ..Default::default()
+        };
+        assert_eq!(ordinary(&attrs).unwrap(), MAX_TRANSFER);
+        assert!(
+            ordinary(&FileAttributes {
+                size: Some(MAX_TRANSFER + 1),
+                ..attrs.clone()
+            })
+            .is_err()
+        );
+        assert!(
+            ordinary(&FileAttributes {
+                permissions: Some(0o120600),
+                ..attrs
             })
             .is_err()
         );

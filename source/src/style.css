@@ -58,3 +58,29 @@
 .billing-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}.billing-card{padding:18px;border:1px solid var(--line);background:var(--inset);border-radius:13px}.billing-card h3{margin:0 0 16px;font-size:14px}.billing-metrics{display:grid;grid-template-columns:1fr 1fr;gap:18px 12px}.billing-metrics dl{margin:0}.billing-metrics dt{font-size:11px;color:var(--muted)}.billing-metrics dd{margin:6px 0 0;font-size:15px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.billing-box .table-scroll{margin-top:22px}.renewal-item-info{flex:1}.renewal-item .form-field{font-size:11px;margin-top:10px}.renewal-item input[type=datetime-local]{font-size:12px;min-width:0}.renewal-sum{font-size:11px;color:var(--muted);line-height:1.7;margin:0 0 3px}.terminal-keybar{display:flex;gap:5px;overflow-x:auto;padding:7px 10px;background:#18252f;border-top:1px solid #344650;flex:none;scrollbar-width:thin}.terminal-keybar button{flex:none;min-width:38px;min-height:36px;padding:5px 9px;border:1px solid #3b505e;border-radius:7px;color:#dce6f0;background:#233542;font:12px ui-monospace,monospace;touch-action:manipulation;user-select:none;-webkit-user-select:none}.terminal-keybar button[aria-pressed=true]{background:#356782;border-color:#90b5c9;color:#fff}.terminal-keybar button:disabled{opacity:.4}.terminal-search{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px;background:#18252f;flex:none}.terminal-search[hidden]{display:none}.terminal-search input{flex:1;min-width:100px;background:#121b29;color:#dce6f0;border:1px solid #3b505e;border-radius:6px;padding:7px}.terminal-search button{background:#233542;color:#dce6f0;border:1px solid #3b505e;border-radius:5px;padding:7px}.terminal-search span{font-size:11px;color:#e9ae96}@media(max-width:700px){.terminal-keybar{padding:6px;gap:4px}.terminal-keybar button{min-width:36px;min-height:40px;padding:5px 8px}.terminal-search input{font-size:16px}.terminal-dialog{overscroll-behavior:contain}.billing-cards{grid-template-columns:1fr}}
 
 .terminal-dialog.is-compact-terminal .terminal-header,.terminal-dialog.is-compact-terminal .terminal-quickbar,.terminal-dialog.is-compact-terminal .ssh-session-bar>select,.terminal-dialog.is-compact-terminal .ssh-session-bar>button{display:none}.terminal-dialog.is-compact-terminal .ssh-session-bar{min-height:38px;flex-wrap:nowrap;padding:4px 7px}.terminal-dialog.is-compact-terminal .terminal-toolbar{padding:5px 9px}.terminal-dialog.is-compact-terminal .terminal-tabs{min-height:32px}.terminal-dialog.is-compact-terminal .terminal-footer{padding:5px 10px;font-size:9px}
+
+.file-code-editor{flex:1;min-height:0;overflow:hidden;color:inherit;position:relative}
+.file-editor .file-editor-top{flex-wrap:wrap}
+.file-code-editor .cm-editor.cm-focused{outline:none}
+.file-diff-dialog{width:min(850px,95vw);padding:24px;max-height:85dvh;color:var(--text)}
+.file-diff-dialog>p{overflow-wrap:anywhere}
+.file-diff-content{max-height:55dvh;overflow:auto;font:12px/1.6 ui-monospace,monospace;border:1px solid #8883;border-radius:8px;padding:12px}
+.file-diff-content pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+.diff-added{background:#31844e25;color:#2c8a4b}.diff-removed{background:#c3443820;color:#d16a61}
+.cm-search{display:flex;flex-wrap:wrap;gap:6px}
+.file-code-editor .cm-search button{color:inherit}
+.terminal-keybar button{touch-action:manipulation}
+
+.terminal-restore{max-width:190px;min-width:110px;color:inherit;background:transparent;border:1px solid #8884;border-radius:6px;padding:6px}
+.file-transfer-queue{flex:none;max-height:210px;overflow:auto;border-top:1px solid #8883;padding:10px;font-size:12px}
+.file-transfer-queue>strong{font-weight:500}
+.file-transfer-job{display:flex;flex-wrap:wrap;align-items:center;gap:5px;padding:7px 0;border-bottom:1px solid #8882}
+.file-transfer-job>span{width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-transfer-job>small{flex:1;min-width:80px;overflow-wrap:anywhere}
+.file-transfer-job button{font-size:11px;padding:3px 7px;border:1px solid #8883;border-radius:4px;color:inherit;background:transparent}
+@media(max-width:700px){.terminal-restore{max-width:150px}.file-code-editor .cm-search input{max-width:130px}}
+
+.file-code-editor .cm-search .cm-button{background:transparent;border:1px solid #8884;border-radius:5px;padding:3px 8px;color:inherit;font:inherit}
+.file-code-editor .cm-search input{border:1px solid #8885;border-radius:5px;padding:4px 6px}
+.file-code-editor .cm-panel.cm-search{padding:8px;gap:5px;font-size:12px}
+.file-code-editor .cm-search label{display:inline-flex;align-items:center;gap:3px;font-size:11px}

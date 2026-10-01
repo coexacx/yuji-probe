@@ -1,5 +1,5 @@
 mod inspector;
-mod transfer;
+pub(crate) mod transfer;
 use crate::{core::*, ssh};
 use axum::extract::ws::Message as WS;
 use russh_sftp::{
@@ -96,7 +96,9 @@ pub fn parse(raw: &[u8]) -> Option<Request> {
     Some(r)
 }
 pub fn validate(r: &Request) -> Result<(), Problem> {
-    if r.content.len() > MAX_EDIT
+    if r.revision.len() > 128
+        || r.action.len() > 32
+        || r.content.len() > MAX_EDIT
         || r.offset < 0
         || r.offset > transfer::MAX_TRANSFER as i64
         || r.size > transfer::MAX_TRANSFER
@@ -382,6 +384,7 @@ pub struct Files {
     client: Arc<ssh::Client>,
     node: String,
     name: String,
+    retained: String,
     authorized: Authorize,
     snapshots: HashMap<String, Snapshot>,
     order: VecDeque<String>,
@@ -401,6 +404,7 @@ impl Files {
         client: Arc<ssh::Client>,
         node: String,
         name: String,
+        retained: String,
         authorized: Authorize,
     ) -> Self {
         Self {
@@ -410,6 +414,7 @@ impl Files {
             client,
             node,
             name,
+            retained,
             authorized,
             snapshots: HashMap::new(),
             order: VecDeque::new(),
@@ -431,7 +436,13 @@ impl Files {
         if !(self.authorized)() {
             return Err(error("session", "管理会话已失效"));
         }
-        let duration = if r.action == "save" { 45 } else { 20 };
+        let duration = if matches!(r.action.as_str(), "transfer_resume" | "upload_finish") {
+            120
+        } else if r.action == "save" {
+            45
+        } else {
+            20
+        };
         match timeout(Duration::from_secs(duration), self.handle(r)).await {
             Ok(v) => v,
             Err(_) => {
@@ -449,7 +460,7 @@ impl Files {
         }
     }
     pub async fn cleanup(&mut self) {
-        transfer::cleanup(self).await;
+        transfer::park(self).await;
     }
     pub async fn expire(&mut self) {
         transfer::expire(self).await;

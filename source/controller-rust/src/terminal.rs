@@ -1,4 +1,4 @@
-use crate::{core::*, files, ssh};
+use crate::{core::*, files, retained, ssh};
 use axum::{
     extract::{
         ConnectInfo, State,
@@ -25,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Default, Deserialize)]
 #[serde(default)]
 struct Authorize {
+    resume: String,
     #[serde(rename = "type")]
     kind: String,
     ticket: String,
@@ -98,11 +99,22 @@ struct TerminalGuard {
     sid: String,
     id: String,
     name: String,
+    retained: String,
+    retain: bool,
     stop: CancellationToken,
 }
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         self.stop.cancel();
+        if !self.retained.is_empty() {
+            if self.retain {
+                retained::detached(&self.app, &self.retained);
+            } else {
+                let mut i = self.app.lock();
+                i.retained.remove(&self.retained);
+                let _ = retained::save(&self.app, &i);
+            }
+        }
         let mut i = self.app.lock();
         if let Some(all) = i.terminals.get_mut(&self.sid) {
             all.remove(&self.id);
@@ -120,6 +132,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     let Some(first) = first.filter(|v| {
         v.kind == "authorize"
             && v.ticket.len() == 64
+            && (v.resume.is_empty() || retained::valid(&v.resume))
             && ["", "terminal", "inspect"].contains(&v.mode.as_str())
     }) else {
         return;
@@ -168,6 +181,11 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
             .get(&ticket.node_id)
             .cloned()
             .ok_or_else(|| ApiError::new(409, "节点认证配置不可用"))?;
+        let (retained_id, fresh) = if first.mode == "inspect" {
+            (String::new(), false)
+        } else {
+            retained::reserve(&app, &mut i, &session, &node.public.id, &first.resume)?
+        };
         let stop = app.0.stop.child_token();
         let id = token();
         i.terminals
@@ -175,9 +193,9 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
             .or_default()
             .insert(id.clone(), stop.clone());
         app.record(&mut i, "terminal_opened", &node.public.name);
-        Ok((node, link, secret, stop, id, slot))
+        Ok((node, link, secret, stop, id, slot, retained_id, fresh))
     })();
-    let (node, link, secret, stop, id, _slot) = match authorized {
+    let (node, link, secret, stop, id, _slot, mut retained_id, fresh) = match authorized {
         Ok(v) => v,
         Err(e) => {
             let _ = ws
@@ -191,14 +209,47 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         }
     };
     drop(pending);
-    let _guard = TerminalGuard {
+    let mut _guard = TerminalGuard {
         app: app.clone(),
         sid: session.id.clone(),
         id,
         name: node.public.name.clone(),
+        retained: retained_id.clone(),
+        retain: !fresh,
         stop: stop.clone(),
     };
-    let client = tokio::select! {_=stop.cancelled()=>return,c=ssh::agent_client(&app,link.clone(),&node.public.id,&node.username,&secret)=>match c{Ok(c)=>c,Err(_)=>{let _=ws.send(WS::Text(json!({"type":"error","message":"SSH 验证失败，请检查节点用户、公钥授权与主机指纹"}).to_string().into())).await;return}}};
+    let client = tokio::select! {_=stop.cancelled()=>return,c=ssh::agent_client(&app,link.clone(),&node.public.id,&node.username,&secret)=>match c{Ok(c)=>c,Err(_)=>{let _=ws.send(WS::Text(json!({"type":"error","message":"SSH 连接未完成，请检查现有终端数量、节点用户、公钥授权与主机指纹"}).to_string().into())).await;return}}};
+    if !retained_id.is_empty() {
+        _guard.retain = true;
+        match retained::prepare(&app, &client, &retained_id, fresh).await {
+            Ok(true) => {}
+            Ok(false) => {
+                let mut i = app.lock();
+                i.retained.remove(&retained_id);
+                let _ = retained::save(&app, &i);
+                retained_id.clear();
+            }
+            Err(_) => {
+                retained::ending(&app, &retained_id);
+                let _ = ws
+                    .send(WS::Text(
+                        json!({"type":"error","message":"远端会话已结束或不可用，请新建终端"})
+                            .to_string()
+                            .into(),
+                    ))
+                    .await;
+                let _ = client
+                    .disconnect(russh::Disconnect::ByApplication, "terminal unavailable", "")
+                    .await;
+                return;
+            }
+        }
+    }
+    let files_session = if retained_id.is_empty() {
+        token()
+    } else {
+        retained_id.clone()
+    };
     let terminal = async {
         let mut channel = client.channel_open_session().await.map_err(|_| ())?;
         let (cols, rows) = size(first.cols, first.rows);
@@ -225,7 +276,14 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                 _ => {}
             }
         }
-        channel.request_shell(true).await.map_err(|_| ())?;
+        if retained_id.is_empty() {
+            channel.request_shell(true).await.map_err(|_| ())?;
+        } else {
+            channel
+                .exec(true, retained::attach_command(&app, &retained_id))
+                .await
+                .map_err(|_| ())?;
+        }
         loop {
             match channel.wait().await {
                 Some(ChannelMsg::Success) => break,
@@ -274,13 +332,19 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         let version = session.version.clone();
         let node = node.public.id.clone();
         let link = link.clone();
-        Arc::new(move || app.lock().terminal_valid(&sid, &version, &node, &link))
+        let retained_id = retained_id.clone();
+        Arc::new(move || {
+            let i = app.lock();
+            i.terminal_valid(&sid, &version, &node, &link)
+                && (retained_id.is_empty()
+                    || i.retained.get(&retained_id).is_some_and(|r| !r.closing))
+        })
     };
     let cancel = stop.clone();
     tasks.spawn(async move{loop{tokio::select!{_=cancel.cancelled()=>break,m=send_queue.recv()=>{let Some(m)=m else{break};if !matches!(timeout(Duration::from_secs(5),ws_write.send(m)).await,Ok(Ok(()))){break}}}}cancel.cancel();});
     let _ = out
         .send(WS::Text(
-            json!({"type":"ready","files":!inspect_only,"terminal":!inspect_only,"inspection":true})
+            json!({"type":"ready","files":!inspect_only,"terminal":!inspect_only,"inspection":true,"session":retained_id,"transferSession":files_session,"retentionSeconds":retained::RETENTION})
                 .to_string()
                 .into(),
         ))
@@ -291,6 +355,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         client.clone(),
         node.public.id.clone(),
         node.public.name.clone(),
+        files_session.clone(),
         check.clone(),
     );
     let file_check = check.clone();
@@ -322,6 +387,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     let read_probe = probe.clone();
     let input = shell_write.clone();
     let node_name = node.public.name.clone();
+    let read_retained = retained_id.clone();
     tasks.spawn(async move {
         let mut window = Instant::now();
         let (mut frames, mut bytes, mut terminal_bytes) = (0usize, 0usize, 0usize);
@@ -491,7 +557,11 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                                 notice(&read_out, "notice", "命令不可用，请重新打开终端").await;
                             }
                         }
-                        "close" => break,
+                        "close" => {
+                            retained::ending(&read_app, &read_retained);
+                            break;
+                        }
+                        "detach" => break,
                         _ => break,
                     }
                 }
@@ -502,12 +572,15 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     });
     let output_stop = stop.clone();
     let output = out.clone();
+    let output_app = app.clone();
+    let output_retained = retained_id.clone();
     if let Some(mut shell_read) = shell_read {
         tasks.spawn(async move {
             let mut total = 0usize;
             let mut count = 0usize;
             let mut window = Instant::now();
             let result = async {
+                let mut exited = false;
                 while let Some(msg) = shell_read.wait().await {
                     match msg {
                         ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
@@ -545,7 +618,11 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                                 count += chunk.len();
                             }
                         }
+                        ChannelMsg::ExitStatus { .. } => exited = true,
                         ChannelMsg::Close => {
+                            if exited {
+                                retained::ending(&output_app, &output_retained);
+                            }
                             notice(&output, "closed", "SSH 会话已结束").await;
                             break;
                         }
@@ -559,7 +636,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     }
     let watch_stop = stop.clone();
     let watch_out = out.clone();
-    tasks.spawn(async move{let started=Instant::now();let mut next_ping=Instant::now()+Duration::from_secs(25);let mut timer=tokio::time::interval(Duration::from_secs(1));loop{tokio::select!{_=watch_stop.cancelled()=>break,_=timer.tick()=>{let idle=activity.lock().unwrap().elapsed()>Duration::from_secs(600);let overdue=probe.lock().unwrap().as_ref().is_some_and(|(_,at)|at.elapsed()>Duration::from_secs(5));if idle||overdue||started.elapsed()>Duration::from_secs(3600)||!check(){notice(&watch_out,"error","终端已超时或管理授权失效").await;break}
+    tasks.spawn(async move{let started=Instant::now();let mut next_ping=Instant::now()+Duration::from_secs(25);let mut timer=tokio::time::interval(Duration::from_secs(1));loop{tokio::select!{_=watch_stop.cancelled()=>break,_=timer.tick()=>{let idle=activity.lock().unwrap().elapsed()>Duration::from_secs(600);let overdue=probe.lock().unwrap().as_ref().is_some_and(|(_,at)|at.elapsed()>Duration::from_secs(5));if idle||overdue||started.elapsed()>Duration::from_secs(28800)||!check(){notice(&watch_out,"error","终端已超时或管理授权失效").await;break}
 if Instant::now()>=next_ping{let value=token().as_bytes()[..32].to_vec();*probe.lock().unwrap()=Some((value.clone(),Instant::now()));if !matches!(timeout(Duration::from_secs(5),watch_out.send(WS::Ping(value.into()))).await,Ok(Ok(()))){break}next_ping=Instant::now()+Duration::from_secs(25);}}}}watch_stop.cancel();});
     stop.cancelled().await;
     if timeout(Duration::from_secs(5), &mut file_task)
@@ -570,6 +647,36 @@ if Instant::now()>=next_ping{let value=token().as_bytes()[..32].to_vec();*probe.
     }
     if let Some(shell) = shell_write {
         let _ = timeout(Duration::from_secs(1), shell.close()).await;
+    }
+    let ending = {
+        app.lock()
+            .retained
+            .get(&retained_id)
+            .is_some_and(|r| r.closing)
+    };
+    if retained_id.is_empty() {
+        files::transfer::remove_session(&app, &files_session, &client).await;
+    }
+    if ending {
+        let files_clean = files::transfer::remove_session(&app, &retained_id, &client).await;
+        let command = format!(
+            "{} kill-session -t {} 2>/dev/null || true",
+            retained::prefix(&app),
+            ssh::quote(&format!("yuji_{retained_id}"))
+        );
+        let shell_closed = matches!(
+            timeout(
+                Duration::from_secs(5),
+                ssh::exec(&client, &command, &[], 4096)
+            )
+            .await,
+            Ok(Ok(_))
+        );
+        if shell_closed && files_clean {
+            let mut i = app.lock();
+            i.retained.remove(&retained_id);
+            let _ = retained::save(&app, &i);
+        }
     }
     let _ = timeout(
         Duration::from_secs(1),

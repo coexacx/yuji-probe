@@ -22,7 +22,14 @@ const appearance=await asset('appearance',(await readFile(root+'/src/appearance.
 const terminalAppearance=await asset('terminal-appearance',await readFile(root+'/src/terminal-appearance.mjs'),'js');
 const themes=await asset('themes',(await readFile(root+'/src/themes.mjs','utf8')).replace("'./appearance.mjs'",JSON.stringify(appearance)),'js');
 const anime=await asset('anime-sky',await readFile(root+'/src/anime-sky.svg'),'svg');
-const files=await asset('files',await readFile(root+'/src/files.mjs'),'js');
+const {build}=await import('./frontend-tools/node_modules/esbuild/lib/main.js');
+async function bundle(entry){return (await build({entryPoints:[root+'/src/'+entry],bundle:true,write:false,format:'esm',platform:'browser',target:'es2022',minify:true,nodePaths:[root+'/frontend-tools/node_modules']})).outputFiles[0].contents;}
+const editor=await asset('editor',await bundle('editor.mjs'),'js');
+const transferWorker=await asset('transfer-worker',await bundle('transfer-worker.mjs'),'js');
+const downloadService=await asset('download-service',await readFile(root+'/src/download-service.mjs'),'js');
+const downloadStream=await asset('download-stream',(await readFile(root+'/src/download-stream.mjs','utf8')).replace('__DOWNLOAD_SERVICE__',downloadService),'js');
+const transfers=await asset('transfers',(await readFile(root+'/src/transfers.mjs','utf8')).replace('__TRANSFER_WORKER__',transferWorker).replace("'./download-stream.mjs'",JSON.stringify(downloadStream)),'js');
+const files=await asset('files',(await readFile(root+'/src/files.mjs','utf8')).replace("'./editor.mjs'",JSON.stringify(editor)).replace("'./transfers.mjs'",JSON.stringify(transfers)),'js');
 const terminal=await asset('terminal',(await readFile(root+'/src/terminal.mjs','utf8')).replace("'./terminal-appearance.mjs'",JSON.stringify(terminalAppearance)).replace("'./terminal-keys.mjs'",JSON.stringify(keys)).replace("'./addon-search.mjs'",JSON.stringify(search)).replace("'./xterm.mjs'",JSON.stringify(xterm)).replace("'./addon-fit.mjs'",JSON.stringify(fit)).replace("'./files.mjs'",JSON.stringify(files)),'js');
 const qr=await asset('qrcode',await readFile(root+'/frontend-tools/node_modules/qrcode-generator/dist/qrcode.mjs'),'js');
 const authenticator=await asset('authenticator',(await readFile(root+'/src/authenticator.mjs','utf8')).replace("'./qrcode.mjs'",JSON.stringify(qr)),'js');

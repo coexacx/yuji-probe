@@ -365,6 +365,8 @@ pub struct Inner {
     pub trust: HashMap<String, Trust>,
     pub pins: HashMap<String, String>,
     pub jobs: HashMap<String, DeployJob>,
+    pub enrollments: HashMap<String, crate::enrollment::Enrollment>,
+    pub retained: HashMap<String, crate::retained::Retained>,
     pub terminals: HashMap<String, HashMap<String, CancellationToken>>,
     pub file_edits: HashSet<String>,
     pub telegram: TelegramState,
@@ -470,6 +472,8 @@ impl App {
                 Err(_) => return Err("SSH trust state unavailable"),
             },
             jobs: HashMap::new(),
+            enrollments: HashMap::new(),
+            retained: crate::retained::load(&dir)?,
             terminals: HashMap::new(),
             file_edits: HashSet::new(),
             telegram,
@@ -600,6 +604,14 @@ impl App {
 }
 impl Inner {
     pub fn revoke(&mut self, id: &str) {
+        if let Some(s) = self.sessions.get(id) {
+            self.enrollments.retain(|_, e| e.owner != s.handle);
+            for r in self.retained.values_mut() {
+                if r.owner == s.handle {
+                    r.closing = true;
+                }
+            }
+        }
         if let Some(all) = self.terminals.remove(id) {
             for t in all.values() {
                 t.cancel();

@@ -5,7 +5,7 @@ export function createTerminalKeys({root,getTerm,getSearch,send,paste,fit}){
  const input=document.createElement('input');input.type='search';input.maxLength=256;input.placeholder='搜索终端内容';input.setAttribute('aria-label','搜索终端内容');
  const status=document.createElement('span');status.setAttribute('role','status');
  let enabled=false,ctrl=false,timer=null,interval=null,searchVisible=false,repeatUsed=false;
- function button(label,action){const b=document.createElement('button');b.type='button';b.textContent=label;b.disabled=true;b.addEventListener('pointerdown',e=>e.preventDefault());b.addEventListener('click',action);bar.append(b);return b;}
+ function button(label,action){const b=document.createElement('button');b.type='button';b.textContent=label;b.disabled=true;b.addEventListener('pointerdown',e=>e.preventDefault());b.addEventListener('click',e=>{if(b.disabled)return;b.getAnimations().forEach(a=>a.cancel());b.animate([{boxShadow:'inset 0 0 0 2px var(--accent, #79b8d6)',backgroundColor:'rgba(112,172,208,.48)'},{boxShadow:'inset 0 0 0 2px transparent',backgroundColor:'transparent'}],{duration:320,easing:'ease-out'});action(e);});bar.append(b);return b;}
  const ctrlButton=button('Ctrl',()=>{if(enabled){ctrl=!ctrl;ctrlButton.setAttribute('aria-pressed',String(ctrl));getTerm()?.focus();}});ctrlButton.setAttribute('aria-pressed','false');ctrlButton.title='作用于下一个字母';
  function reset(){ctrl=false;ctrlButton.setAttribute('aria-pressed','false');}
  function key(value){if(!enabled)return;reset();send(value);getTerm()?.focus();}

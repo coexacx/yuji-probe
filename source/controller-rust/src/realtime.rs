@@ -328,6 +328,10 @@ fn apply(i: &mut Inner, id: &str, m: Metrics) -> bool {
     n.public.network = m.network;
     n.last_seen = now();
     n.agent_version = m.version;
+    if n.deploy_state == "enrolling" {
+        n.deploy_state = "done".into();
+        n.deploy_message = "Agent 已连接，监控数据已就绪".into();
+    }
     n.demo = false;
     n.public.online = true;
     n.public.pending = false;
