@@ -783,6 +783,11 @@ impl Files {
     }
 }
 
+pub fn is_transfer(r: &Request) -> bool {
+    r.action.starts_with("upload_")
+        || r.action.starts_with("download_")
+        || r.action.starts_with("transfer_")
+}
 pub fn is_chunk(r: &Request) -> bool {
     transfer::chunk(&r.action)
 }

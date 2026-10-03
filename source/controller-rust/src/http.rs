@@ -18,6 +18,23 @@ async fn api(
     ConnectInfo(remote): ConnectInfo<SocketAddr>,
     req: Request<Body>,
 ) -> Response {
+    if !app.0.php_gateway
+        && !req.uri().path().starts_with("/api/")
+        && req.uri().path() != "/_internal/health"
+    {
+        let response = if !crate::web::host_matches(&req, &app.0.origin) {
+            ApiError::new(421, "请使用配置的站点域名").into_response()
+        } else if !matches!(req.method().as_str(), "GET" | "HEAD") {
+            ApiError::new(405, "请求方法不正确").into_response()
+        } else {
+            crate::web::response(
+                req.uri().path(),
+                req.method() == "HEAD",
+                &app.lock().data.site.name,
+            )
+        };
+        return crate::web::secure(response);
+    }
     let c = Context::new(
         req.method().as_str(),
         req.uri().path(),
@@ -113,11 +130,13 @@ async fn api(
         }
         dispatch(&app, &c, &bytes)
     };
-    match timeout(Duration::from_secs(request_timeout), result).await {
-        Ok(Ok(reply)) => reply.into_response(),
-        Ok(Err(e)) => e.into_response(),
-        Err(_) => ApiError::new(504, "请求处理超时，请重试").into_response(),
-    }
+    crate::web::secure(
+        match timeout(Duration::from_secs(request_timeout), result).await {
+            Ok(Ok(reply)) => reply.into_response(),
+            Ok(Err(e)) => e.into_response(),
+            Err(_) => ApiError::new(504, "请求处理超时，请重试").into_response(),
+        },
+    )
 }
 fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
     let mut i = app.lock();
@@ -194,6 +213,7 @@ fn dispatch(app: &App, c: &Context, body: &[u8]) -> ApiResult<ApiReply> {
         }
         ("/api/admin/enrollment", "POST") => crate::enrollment::issue(app, &mut i, c, body),
         ("/api/admin/terminal-ticket", "POST") => realtime::ticket(app, &mut i, c, body),
+        ("/api/admin/terminal-close", "POST") => crate::retained::api(app, &mut i, c, body),
         ("/api/admin/trust-ssh", "POST") => deploy::trust(app, &mut i, c, body),
         ("/api/admin/deploy", "POST") => deploy::begin(app, &mut i, c, body),
         ("/api/admin/go-live", "POST") => {
@@ -267,6 +287,7 @@ pub async fn serve(app: App, listen: SocketAddr) -> Result<(), &'static str> {
     let mut tasks = JoinSet::new();
     telegram::start(&app);
     crate::file_sessions::start(&app);
+    crate::retained::start(&app);
     crate::legacy_terminals::start(&app);
     crate::operations::start(&app);
     eprintln!("Rust probe controller started on loopback");

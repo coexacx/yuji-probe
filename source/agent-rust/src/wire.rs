@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 pub const MAX_MESSAGE: usize = 96 * 1024;
 pub const MAX_CHUNK: usize = 16 * 1024;
 pub const WINDOW: usize = 16;
+// Four UI tabs with separate shell, browsing and transfer streams, plus cleanup/inspection.
+pub const MAX_TUNNELS: usize = 16;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Volume {
     pub name: String,

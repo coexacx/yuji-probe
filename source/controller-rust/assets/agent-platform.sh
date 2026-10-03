@@ -16,7 +16,7 @@ case "$(uname -m)" in x86_64) probe_arch=amd64 ;; aarch64|arm64) probe_arch=arm6
 if [ "${1:-}" = prepare ]; then
     if [ "$probe_platform" = apt ]; then
         probe_missing=''
-        for probe_pair in 'python3:python3' 'tar:tar' 'gzip:gzip' 'useradd:passwd' 'getent:libc-bin'; do
+        for probe_pair in 'tmux:tmux' 'python3:python3' 'tar:tar' 'gzip:gzip' 'useradd:passwd' 'getent:libc-bin'; do
             command -v "${probe_pair%%:*}" >/dev/null || probe_missing="$probe_missing ${probe_pair#*:}"
         done
         [ -s /etc/ssl/certs/ca-certificates.crt ] || probe_missing="$probe_missing ca-certificates"
@@ -29,7 +29,7 @@ if [ "${1:-}" = prepare ]; then
         fi
     else
         probe_missing=''
-        for probe_pair in 'python3:python3' 'tar:tar' 'gzip:gzip' 'useradd:shadow-utils' 'getent:glibc-common'; do
+        for probe_pair in 'tmux:tmux' 'python3:python3' 'tar:tar' 'gzip:gzip' 'useradd:shadow-utils' 'getent:glibc-common'; do
             command -v "${probe_pair%%:*}" >/dev/null || probe_missing="$probe_missing ${probe_pair#*:}"
         done
         [ -s /etc/pki/tls/certs/ca-bundle.crt ] || probe_missing="$probe_missing ca-certificates"

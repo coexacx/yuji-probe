@@ -1,0 +1,4 @@
+const form=document.querySelector('#setup'),error=document.querySelector('#error');
+let csrf='';
+try{const response=await fetch('/install/status',{credentials:'same-origin'});const data=await response.json();if(data.owner){csrf=data.csrf;form.hidden=false;document.querySelector('#locked').hidden=true;}}catch{error.textContent='无法读取安装状态，请刷新重试。';}
+form.addEventListener('submit',async event=>{event.preventDefault();const button=form.querySelector('button');button.disabled=true;error.textContent='';try{const response=await fetch('/install',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(Object.fromEntries(new FormData(form)))});const data=await response.json();if(!response.ok)throw Error(data.error||'安装失败');form.reset();button.textContent='安装完成，正在跳转…';setTimeout(()=>location.replace('/?login=1'),1000);}catch(e){error.textContent=e.message;button.disabled=false;}});

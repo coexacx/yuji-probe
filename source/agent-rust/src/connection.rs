@@ -204,7 +204,7 @@ pub async fn connect(
                     "ack"=>{crate::management::health(config_path,config);},
                     "ssh_open"=>{
                         if msg.session.len()!=32{return Err("invalid terminal session");}
-                        if tunnels.contains_key(&msg.session)||tunnels.len()>=2{
+                        if tunnels.contains_key(&msg.session)||tunnels.len()>=crate::wire::MAX_TUNNELS{
                             let mut reply=Message::new("ssh_ready",&msg.session);reply.error="terminal capacity reached".into();send(&out,reply).await?;continue;
                         }
                         generation=generation.checked_add(1).ok_or("session generation exhausted")?;

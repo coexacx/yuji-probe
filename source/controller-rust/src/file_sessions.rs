@@ -1,4 +1,4 @@
-//! File-transfer leases, independent of SSH shells. Disconnects always end the shell.
+//! File-transfer leases, independent of SSH shell recovery.
 use crate::{core::*, ssh};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, time::Duration};

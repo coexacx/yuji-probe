@@ -366,6 +366,7 @@ pub struct Inner {
     pub pins: HashMap<String, String>,
     pub jobs: HashMap<String, DeployJob>,
     pub enrollments: HashMap<String, crate::enrollment::Enrollment>,
+    pub retained: HashMap<String, crate::retained::Retained>,
     pub file_sessions: HashMap<String, crate::file_sessions::TransferSession>,
     pub terminals: HashMap<String, HashMap<String, CancellationToken>>,
     pub file_edits: HashSet<String>,
@@ -477,6 +478,7 @@ impl App {
             },
             jobs: HashMap::new(),
             enrollments: HashMap::new(),
+            retained: crate::retained::load(&dir)?,
             file_sessions: crate::file_sessions::load(&dir)?,
             terminals: HashMap::new(),
             file_edits: HashSet::new(),
@@ -610,6 +612,14 @@ impl Inner {
     pub fn revoke(&mut self, id: &str) {
         if let Some(s) = self.sessions.get(id) {
             self.enrollments.retain(|_, e| e.owner != s.handle);
+            for r in self.retained.values_mut() {
+                if r.owner == s.handle {
+                    r.closing = true;
+                    if let Some(stop) = &r.stop {
+                        stop.cancel();
+                    }
+                }
+            }
             for r in self.file_sessions.values_mut() {
                 if r.owner == s.handle {
                     r.closing = true;

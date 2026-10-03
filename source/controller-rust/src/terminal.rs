@@ -1,4 +1,4 @@
-use crate::{core::*, file_sessions, files, ssh};
+use crate::{core::*, file_sessions, files, retained, ssh};
 use axum::{
     body::Bytes,
     extract::{
@@ -26,6 +26,8 @@ use tokio_util::sync::CancellationToken;
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct Authorize {
+    #[serde(rename = "shellSession")]
+    shell_session: String,
     #[serde(rename = "transferSession")]
     transfer_session: String,
     #[serde(rename = "type")]
@@ -174,6 +176,7 @@ struct TerminalGuard {
     id: String,
     name: String,
     file_sessions: String,
+    shell_session: String,
     stop: CancellationToken,
     started: Instant,
     reason: EndReason,
@@ -183,6 +186,10 @@ impl Drop for TerminalGuard {
         self.stop.cancel();
         if !self.file_sessions.is_empty() {
             file_sessions::detached(&self.app, &self.file_sessions);
+        }
+        if !self.shell_session.is_empty() {
+            let reason = self.reason.lock().unwrap().unwrap_or("connection_ended");
+            retained::release(&self.app, &self.shell_session, reason);
         }
         let mut i = self.app.lock();
         if let Some(all) = i.terminals.get_mut(&self.sid) {
@@ -212,8 +219,10 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         v.kind == "authorize"
             && v.ticket.len() == 64
             && (v.transfer_session.is_empty() || file_sessions::valid(&v.transfer_session))
+            && (v.shell_session.is_empty() || retained::valid(&v.shell_session))
             && ["", "terminal", "inspect"].contains(&v.mode.as_str())
-            && (v.mode != "inspect" || v.transfer_session.is_empty())
+            && (v.mode != "inspect"
+                || (v.transfer_session.is_empty() && v.shell_session.is_empty()))
     }) else {
         return;
     };
@@ -261,52 +270,125 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
             .get(&ticket.node_id)
             .cloned()
             .ok_or_else(|| ApiError::new(409, "节点认证配置不可用"))?;
+        let stop = app.0.stop.child_token();
+        let (shell_session, fresh) = if first.mode == "inspect" {
+            (String::new(), false)
+        } else {
+            retained::reserve(
+                &app,
+                &mut i,
+                &session,
+                &node.public.id,
+                &first.shell_session,
+                &stop,
+            )?
+        };
         let file_sessions_id = if first.mode == "inspect" {
             String::new()
         } else {
-            file_sessions::reserve(
+            match file_sessions::reserve(
                 &app,
                 &mut i,
                 &session,
                 &node.public.id,
                 &first.transfer_session,
-            )?
+            ) {
+                Ok(id) => id,
+                Err(e) => {
+                    if let Some(r) = i.retained.get_mut(&shell_session) {
+                        r.attached = false;
+                        r.stop = None;
+                        if fresh {
+                            r.closing = true;
+                        }
+                    }
+                    let _ = retained::save(&app, &i);
+                    return Err(e);
+                }
+            }
         };
-        let stop = app.0.stop.child_token();
         let id = token();
         i.terminals
             .entry(session.id.clone())
             .or_default()
             .insert(id.clone(), stop.clone());
         app.record(&mut i, "terminal_opened", &node.public.name);
-        Ok((node, link, secret, stop, id, slot, file_sessions_id))
+        Ok((
+            node,
+            link,
+            secret,
+            stop,
+            id,
+            slot,
+            file_sessions_id,
+            shell_session,
+            fresh,
+        ))
     })();
-    let (node, link, secret, stop, id, _slot, file_sessions_id) = match authorized {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = ws
+    let (node, link, secret, stop, id, _slot, file_sessions_id, shell_session, fresh) =
+        match authorized {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = ws
                 .send(WS::Text(
-                    json!({"type":"error","message":e.message})
+                    json!({"type":"error","message":e.message,"status":e.status,"retryable":e.status==409})
                         .to_string()
                         .into(),
                 ))
                 .await;
-            return;
-        }
-    };
+                return;
+            }
+        };
     drop(pending);
     let reason: EndReason = Arc::new(Mutex::new(None));
-    let _guard = TerminalGuard {
+    let mut guard = TerminalGuard {
         app: app.clone(),
         sid: session.id.clone(),
         id,
         name: node.public.name.clone(),
         file_sessions: file_sessions_id.clone(),
+        shell_session: shell_session.clone(),
         stop: stop.clone(),
         started: Instant::now(),
         reason: reason.clone(),
     };
-    let client = tokio::select! {_=stop.cancelled()=>return,c=ssh::agent_client(&app,link.clone(),&node.public.id,&node.username,&secret)=>match c{Ok(c)=>c,Err(_)=>{let _=ws.send(WS::Text(json!({"type":"error","message":"SSH 连接未完成，请检查现有终端数量、节点用户、公钥授权与主机指纹"}).to_string().into())).await;return}}};
+    let client = tokio::select! {
+        _=stop.cancelled()=>return,
+        c=ssh::agent_client(&app,link.clone(),&node.public.id,&node.username,&secret)=>match c {
+            Ok(c)=>c,
+            Err(_)=>{
+                ended(&reason,"ssh_connection_lost");
+                let _=ws.send(WS::Text(json!({"type":"error","message":"SSH 暂未连接，请检查节点用户、公钥授权与主机指纹","retryable":!fresh}).to_string().into())).await;
+                return
+            }
+        }
+    };
+    if !shell_session.is_empty() {
+        let (cols, rows) = size(first.cols, first.rows);
+        if retained::prepare(&app, &client, &shell_session, fresh, cols, rows)
+            .await
+            .is_err()
+        {
+            ended(&reason, "ssh_channel_closed");
+            let message = if fresh {
+                "无法创建可恢复终端，请重新部署 Agent 以安装 tmux"
+            } else {
+                "原 SSH 会话已结束，请点击断开后新建连接"
+            };
+            let _ = ws
+                .send(WS::Text(
+                    json!({"type":"error","message":message,"status":410,"retryable":false})
+                        .to_string()
+                        .into(),
+                ))
+                .await;
+            let _ = client
+                .disconnect(russh::Disconnect::ByApplication, "shell unavailable", "")
+                .await;
+            return;
+        }
+        let _=ws.send(WS::Text(json!({"type":"session","shellSession":shell_session,"retentionSeconds":retained::RETENTION}).to_string().into())).await;
+    }
     let files_session = file_sessions_id.clone();
     let terminal = async {
         let mut channel = client.channel_open_session().await.map_err(|_| ())?;
@@ -334,7 +416,10 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                 _ => {}
             }
         }
-        channel.request_shell(true).await.map_err(|_| ())?;
+        channel
+            .exec(true, retained::attach_command(&app, &shell_session))
+            .await
+            .map_err(|_| ())?;
         loop {
             match channel.wait().await {
                 Some(ChannelMsg::Success) => break,
@@ -384,9 +469,12 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         let node = node.public.id.clone();
         let link = link.clone();
         let file_sessions_id = file_sessions_id.clone();
+        let shell_session = shell_session.clone();
         Arc::new(move || {
             let i = app.lock();
             i.terminal_valid(&sid, &version, &node, &link)
+                && (shell_session.is_empty()
+                    || i.retained.get(&shell_session).is_some_and(|r| !r.closing))
                 && (file_sessions_id.is_empty()
                     || i.file_sessions
                         .get(&file_sessions_id)
@@ -432,42 +520,32 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         }
         cancel.cancel();
     });
+    if !shell_session.is_empty() {
+        retained::ready(&app, &shell_session);
+    }
     let _ = out
         .send(WS::Text(
-            json!({"type":"ready","files":!inspect_only,"terminal":!inspect_only,"inspection":true,"transferSession":files_session})
+            json!({"type":"ready","files":!inspect_only,"terminal":!inspect_only,"inspection":true,"transferSession":files_session,"shellSession":shell_session,"restored":!fresh&&!inspect_only,"retentionSeconds":retained::RETENTION})
                 .to_string()
                 .into(),
         ))
         .await;
-    let (file_tx, mut file_rx) = mpsc::channel::<files::Request>(2);
-    let mut file_service = files::Files::new(
-        app.clone(),
-        client.clone(),
-        node.public.id.clone(),
-        node.public.name.clone(),
-        files_session.clone(),
-        check.clone(),
-    );
-    let file_check = check.clone();
-    let file_out = out.clone();
-    let file_stop = stop.clone();
-    let mut file_task = tokio::spawn(async move {
-        let mut clock = tokio::time::interval(Duration::from_secs(15));
-        loop {
-            tokio::select! {
-                biased;
-                _ = file_stop.cancelled() => break,
-                _ = clock.tick() => file_service.expire().await,
-                r = file_rx.recv() => {
-                    let Some(r) = r else { break };
-                    if !file_check() { break; }
-                    let value = tokio::select! { biased; _ = file_stop.cancelled() => break, v = file_service.process(&r) => v };
-                    if file_check() { files::respond(&file_out, &r, value).await; }
-                }
-            }
-        }
-        file_service.cleanup().await;
-    });
+    let (file_tx, file_rx) = mpsc::channel::<files::Request>(2);
+    let (transfer_tx, transfer_rx) = mpsc::channel::<files::Request>(2);
+    let file_context = FileConnection {
+        app: app.clone(),
+        node: node.clone(),
+        secret: secret.clone(),
+        link: link.clone(),
+        session: files_session.clone(),
+        check: check.clone(),
+        out: out.clone(),
+        stop: stop.clone(),
+    };
+    let mut file_tasks = vec![
+        tokio::spawn(file_worker(file_context.clone(), file_rx)),
+        tokio::spawn(file_worker(file_context, transfer_rx)),
+    ];
     // Keep the WebSocket reader available for acknowledgements, heartbeats and
     // cancellation even when the remote SSH receive window temporarily fills.
     // Input remains ordered and bounded; an interrupted write is never replayed.
@@ -591,8 +669,8 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                     }
                     continue;
                 }
-                WS::Close(_) => {
-                    ended(&read_reason, "browser_closed");
+                WS::Close(frame) => {
+                    ended(&read_reason, if frame.as_ref().is_some_and(|f| f.code == 1000) { "browser_closed" } else { "browser_connection_lost" });
                     break;
                 }
                 _ => {}
@@ -672,7 +750,8 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                             if !reject(&r, e) { break; }
                             continue;
                         }
-                        match file_tx.try_send(r) {
+                        let tx = if files::is_transfer(&r) { &transfer_tx } else { &file_tx };
+                        match tx.try_send(r) {
                             Ok(_) => {}
                             Err(e) => {
                                 let r = e.into_inner();
@@ -773,6 +852,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     let output = out.clone();
     let output_app = app.clone();
     let output_file_sessions = file_sessions_id.clone();
+    let output_shell_session = shell_session.clone();
     let output_reason = reason.clone();
     let output_client = client.clone();
     let output_link = link.clone();
@@ -818,7 +898,13 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                         }
                         ChannelMsg::ExitStatus { .. } => exited = true,
                         ChannelMsg::Close => {
-                            if exited {
+                            if exited
+                                && !output_app
+                                    .lock()
+                                    .retained
+                                    .get(&output_shell_session)
+                                    .is_some_and(|r| r.reconnecting)
+                            {
                                 file_sessions::ending(&output_app, &output_file_sessions);
                             }
                             let why = if exited {
@@ -888,27 +974,29 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         watch_stop.cancel();
     });
     stop.cancelled().await;
-    // Closing the PTY comes first; parked file checkpoints do not keep shells alive.
+    // Closing this SSH channel only detaches tmux. Lease policy decides whether
+    // the remote shell is retained or terminated; no input is ever replayed.
     if let Some(shell) = shell_write {
         let _ = timeout(Duration::from_secs(1), shell.close()).await;
     }
-    if timeout(Duration::from_secs(5), &mut file_task)
-        .await
-        .is_err()
-    {
-        file_task.abort();
-        let _ = file_task.await;
+    for task in &mut file_tasks {
+        if timeout(Duration::from_secs(5), &mut *task).await.is_err() {
+            task.abort();
+            let _ = task.await;
+        }
     }
-    let ending = {
-        app.lock()
-            .file_sessions
-            .get(&file_sessions_id)
-            .is_some_and(|r| r.closing)
-    };
-    if ending && files::transfer::remove_session(&app, &files_session, &client).await {
-        let mut i = app.lock();
-        i.file_sessions.remove(&files_session);
-        let _ = file_sessions::save(&app, &i);
+    file_sessions::detached(&app, &file_sessions_id);
+    guard.file_sessions.clear();
+    let why = reason.lock().unwrap().unwrap_or("connection_ended");
+    retained::release(&app, &shell_session, why);
+    guard.shell_session.clear();
+    if app
+        .lock()
+        .retained
+        .get(&shell_session)
+        .is_some_and(|r| r.closing)
+    {
+        retained::cleanup_client(&app, &shell_session, &client).await;
     }
     let _ = timeout(
         Duration::from_secs(1),
@@ -925,6 +1013,86 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     }
     tasks.abort_all();
     while tasks.join_next().await.is_some() {}
+}
+
+#[derive(Clone)]
+struct FileConnection {
+    app: App,
+    node: crate::model::Node,
+    secret: crate::model::NodeSecret,
+    link: Arc<crate::realtime::AgentLink>,
+    session: String,
+    check: files::Authorize,
+    out: mpsc::Sender<WS>,
+    stop: CancellationToken,
+}
+async fn file_worker(c: FileConnection, mut requests: mpsc::Receiver<files::Request>) {
+    let mut service: Option<files::Files> = None;
+    let mut client: Option<Arc<ssh::Client>> = None;
+    let mut clock = tokio::time::interval(Duration::from_secs(15));
+    loop {
+        let request = tokio::select! {
+            biased; _=c.stop.cancelled()=>break,
+            r=requests.recv()=>match r {Some(r)=>r,None=>break},
+            _=clock.tick()=>{ if let Some(s)=service.as_mut() {s.expire().await;} continue; }
+        };
+        if !(c.check)() {
+            break;
+        }
+        if client.as_ref().is_none_or(|v| v.is_closed()) {
+            if let Some(mut s) = service.take() {
+                s.cleanup().await;
+            }
+            let opened = tokio::select! {
+                biased; _=c.stop.cancelled()=>break,
+                v=ssh::agent_client(&c.app,c.link.clone(),&c.node.public.id,&c.node.username,&c.secret)=>v
+            };
+            match opened {
+                Ok(v) => {
+                    service = Some(files::Files::new(
+                        c.app.clone(),
+                        v.clone(),
+                        c.node.public.id.clone(),
+                        c.node.public.name.clone(),
+                        c.session.clone(),
+                        c.check.clone(),
+                    ));
+                    client = Some(v);
+                }
+                Err(_) => {
+                    files::respond(
+                        &c.out,
+                        &request,
+                        Err(files::Problem {
+                            code: "unavailable",
+                            message: "文件连接暂不可用，请稍后重试；旧 Agent 请先更新".into(),
+                        }),
+                    )
+                    .await;
+                    continue;
+                }
+            }
+        }
+        let Some(s) = service.as_mut() else { break };
+        let result = tokio::select! {biased; _=c.stop.cancelled()=>break,v=s.process(&request)=>v};
+        if (c.check)() {
+            files::respond(&c.out, &request, result).await;
+        }
+    }
+    if let Some(mut s) = service {
+        s.cleanup().await;
+    }
+    if let Some(v) = client {
+        let _ = timeout(
+            Duration::from_secs(1),
+            v.disconnect(
+                russh::Disconnect::ByApplication,
+                "file connection ended",
+                "",
+            ),
+        )
+        .await;
+    }
 }
 
 #[cfg(test)]

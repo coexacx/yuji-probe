@@ -18,3 +18,5 @@ signing.key
 **/__pycache__/
 *.pyc
 /source/public/
+
+/source/frontend-tools/node_modules

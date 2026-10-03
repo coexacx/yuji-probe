@@ -171,7 +171,27 @@ async fn manage(app: &App, node: &Node, task: &Transfer) -> Result<(), &'static 
         .disconnect(russh::Disconnect::ByApplication, "management finished", "")
         .await;
     match result {
-        Ok(reply) if reply.lines().any(|v| v.trim() == r#"{"ok":true}"#) => Ok(()),
+        Ok(reply) if reply.lines().any(|v| v.trim() == r#"{"ok":true}"#) => {
+            if task.action == "upgrade" {
+                let client = ssh::recovery_client(app, node, &task.old).await?;
+                let input = zeroize::Zeroizing::new(
+                    serde_json::to_vec(&json!({"action":"terminal-prepare","proof":proof}))
+                        .map_err(|_| "terminal dependency request unavailable")?,
+                );
+                let result = ssh::exec(&client, "yuji-manage", &input, 4096).await;
+                let _ = client
+                    .disconnect(
+                        russh::Disconnect::ByApplication,
+                        "terminal dependency ready",
+                        "",
+                    )
+                    .await;
+                if !result.is_ok_and(|r| r.lines().any(|v| v.trim() == r#"{"ok":true}"#)) {
+                    return Err("Agent 已更新，tmux 未就绪；请重新部署 Agent 或在服务器安装 tmux");
+                }
+            }
+            Ok(())
+        }
         _ => Err("远端未确认完成；失败配置会回退，请检查 SSH、证书和 Agent 状态"),
     }
 }

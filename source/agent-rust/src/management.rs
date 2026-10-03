@@ -380,6 +380,17 @@ pub fn run(path: &Path) -> Result<()> {
                 return Err("new controller unavailable; previous connection restored");
             }
         }
+        "terminal-prepare" => {
+            let script = "set -eu; export PATH=/usr/sbin:/usr/bin:/sbin:/bin; command -v tmux >/dev/null && exit 0; if command -v apt-get >/dev/null; then export DEBIAN_FRONTEND=noninteractive; apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq --no-install-recommends tmux >/dev/null 2>&1; elif command -v dnf >/dev/null; then dnf install -y -q tmux >/dev/null 2>&1; else exit 73; fi; command -v tmux >/dev/null";
+            if !Command::new("/usr/bin/timeout")
+                .args(["150", "/bin/sh", "-c", script])
+                .status()
+                .map_err(|_| "terminal dependency preparation unavailable")?
+                .success()
+            {
+                return Err("tmux installation failed; retry deployment");
+            }
+        }
         "remove" => {
             // The SSH connection may travel through this Agent: acknowledge before delayed stop.
             let status = Command::new("/usr/bin/systemd-run")

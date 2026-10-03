@@ -5,13 +5,15 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 
 parser=argparse.ArgumentParser()
+parser.add_argument("--variant", choices=["php","rust"], default="php")
 parser.add_argument("--signing-key",type=pathlib.Path,required=True)
 parser.add_argument("--output",type=pathlib.Path,required=True)
 parser.add_argument("--agent-amd64",type=pathlib.Path,required=True)
 parser.add_argument("--agent-arm64",type=pathlib.Path,required=True)
 args=parser.parse_args()
 root=pathlib.Path(__file__).resolve().parent.parent
-version="0.9.2"
+version="0.10.0"
+flavor="rust" if args.variant=="rust" else "panel"
 out=args.output.resolve()
 if out==root or root in out.parents: raise SystemExit("Release output must be outside the source tree")
 keypath=args.signing_key.resolve()
@@ -31,24 +33,28 @@ for section in ["app","bin","docs","ops","public","source","THIRD-PARTY-NOTICES"
         if rel.parts[:2] in (("source","state"),("source","public")): continue
         if p.is_symlink(): raise SystemExit("Package cannot include symbolic links")
         if p.is_file():
+            if args.variant=="rust" and (p.suffix==".php" or p.name=="php-pool.conf"):continue
             if p.suffix==".log": continue
             if p.suffix in (".log",".pyc",".zip") or p.name in (".env","signing.key"): raise SystemExit("Unexpected runtime/private file: "+str(rel))
             files[str(rel)]=p.read_bytes()
-for name in ["README.md","LICENSE","SECURITY.md","install.sh",".gitignore",".gitattributes"]:
+for name in ["README.md","LICENSE","SECURITY.md","install.sh","install-rust.sh","README-RUST.md",".gitignore",".gitattributes"]:
     files[name]=(root/name).read_bytes()
+if args.variant=="rust":
+    files.pop("install.sh",None)
+    files["README.md"]=(root/"README-RUST.md").read_bytes()
 files["storage/.gitkeep"]=b""
 sums={k:hashlib.sha256(v).hexdigest() for k,v in files.items()}
 files["SHA256SUMS.json"]=(json.dumps(sums,ensure_ascii=False,indent=2)+"\n").encode()
 out.mkdir(parents=True,exist_ok=True)
-name=f"yuji-probe-panel-{version}.zip"
+name=f"yuji-probe-{flavor}-{version}.zip"
 archive=out/name
 with zipfile.ZipFile(archive,"w",zipfile.ZIP_DEFLATED,compresslevel=9) as z:
     # An explicit private storage directory is important for manual extraction.
-    d=zipfile.ZipInfo(f"yuji-probe-panel-{version}/storage/",(2026,9,30,0,0,0))
+    d=zipfile.ZipInfo(f"yuji-probe-{flavor}-{version}/storage/",(2026,9,30,0,0,0))
     d.external_attr=(stat.S_IFDIR|0o700)<<16
     z.writestr(d,b"")
     for rel,data in sorted(files.items()):
-        entry=zipfile.ZipInfo(f"yuji-probe-panel-{version}/{rel}",(2026,9,30,0,0,0))
+        entry=zipfile.ZipInfo(f"yuji-probe-{flavor}-{version}/{rel}",(2026,9,30,0,0,0))
         mode=0o755 if rel.startswith("bin/") or rel=="install.sh" or rel.endswith(".sh") else 0o644
         if rel=="storage/.gitkeep":mode=0o600
         entry.external_attr=(stat.S_IFREG|mode)<<16
@@ -76,12 +82,12 @@ for arch in ["amd64","arm64"]:
     expected_machine=62 if arch=="amd64" else 183
     if raw[:4]!=b"\x7fELF" or int.from_bytes(raw[18:20],"little")!=expected_machine:
         raise SystemExit("Agent is not the expected ELF architecture")
-    name=f"vistart-probe-agent-0.2.1-linux-{arch}"
+    name=f"vistart-probe-agent-0.2.2-linux-{arch}"
     shutil.copyfile(path,out/name)
     (out/name).chmod(0o755)
     agents[arch]={"name":name,"size":len(raw),"sha256":hashlib.sha256(raw).hexdigest()}
-sign("stable.json","0.2.1",agents)
+sign("stable.json","0.2.2",agents)
 
 (out/"release-public.txt").write_text(anchor+"\n")
-shutil.copyfile(root/"install.sh",out/"install.sh")
+shutil.copyfile(root/("install-rust.sh" if args.variant=="rust" else "install.sh"),out/("install-rust.sh" if args.variant=="rust" else "install.sh"))
 print(json.dumps({"package":entry,"source_files":len(files),"controllers":controllers},indent=2))

@@ -16,7 +16,7 @@ export function initAdmin(hooks){
  let draggingNode=null;
  let sessionEpoch=0,sessionGate=null,siteEpoch=0;
  const sessionEndpoints=new Set(['/api/session','/api/login','/api/logout','/api/admin/password','/api/admin/mfa/enable','/api/admin/mfa/disable']);
- async function api(path,method='GET',body){
+ async function api(path,method='GET',body,extra={}){
   // Serialize cookie rotation, and discard responses issued under an older session.
   // A delayed monitoring poll must not sign out a freshly authenticated administrator.
   while(sessionGate)await sessionGate;
@@ -24,7 +24,7 @@ export function initAdmin(hooks){
   if(changesSession){sessionEpoch++;sessionGate=new Promise(resolve=>{release=resolve;});}
   const epoch=sessionEpoch;
   try{
-   const options={method,credentials:'same-origin',headers:{'Content-Type':'application/json'}};
+   const options={method,credentials:'same-origin',keepalive:extra.keepalive===true,headers:{'Content-Type':'application/json'}};
    if(method!=='GET'){options.headers['X-CSRF-Token']=csrf;if(body!==undefined)options.body=JSON.stringify(body);}
    let response;
    try{response=await fetch(path,options);}catch{const error=Error('连接主控失败，请稍后重试');error.network=true;throw error;}

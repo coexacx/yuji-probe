@@ -637,7 +637,11 @@ pub async fn check_release(app: &App) -> ApiResult<ApiReply> {
         Duration::from_secs(10),
         app.0
             .http
-            .get("https://api.github.com/repos/coexacx/yuji-probe/releases/latest")
+            .get(if app.0.php_gateway {
+                "https://api.github.com/repos/coexacx/yuji-probe/releases/latest"
+            } else {
+                "https://api.github.com/repos/coexacx/yuji-probe/releases?per_page=10"
+            })
             .send(),
     )
     .await
@@ -653,15 +657,47 @@ pub async fn check_release(app: &App) -> ApiResult<ApiReply> {
         .await
         .map_err(|_| ApiError::new(502, "GitHub 响应失败"))?
     {
-        if bytes.len() + chunk.len() > 256 * 1024 {
+        if bytes.len() + chunk.len() > 1024 * 1024 {
             return Err(ApiError::new(502, "发布信息过大"));
         }
         bytes.extend(chunk);
     }
     let value: Value =
         serde_json::from_slice(&bytes).map_err(|_| ApiError::new(502, "发布信息格式不正确"))?;
+    let value = if app.0.php_gateway {
+        &value
+    } else {
+        value
+            .as_array()
+            .and_then(|all| {
+                all.iter()
+                    .filter(|v| {
+                        v["draft"] == false
+                            && v["prerelease"] == false
+                            && v["tag_name"]
+                                .as_str()
+                                .and_then(|s| s.strip_prefix("rust-v"))
+                                .is_some_and(valid_version)
+                    })
+                    .max_by(|a, b| {
+                        let parts = |v: &Value| {
+                            v["tag_name"]
+                                .as_str()
+                                .unwrap_or("")
+                                .trim_start_matches("rust-v")
+                                .split('.')
+                                .filter_map(|x| x.parse::<u64>().ok())
+                                .collect::<Vec<_>>()
+                        };
+                        parts(a).cmp(&parts(b))
+                    })
+            })
+            .ok_or_else(|| ApiError::new(502, "Nginx + Rust 发布信息暂不可用"))?
+    };
     let tag = value["tag_name"].as_str().unwrap_or("");
-    let version = tag.strip_prefix('v').unwrap_or("");
+    let version = tag
+        .strip_prefix(if app.0.php_gateway { "v" } else { "rust-v" })
+        .unwrap_or("");
     if !valid_version(version) {
         return Err(ApiError::new(502, "发布版本格式不正确"));
     }

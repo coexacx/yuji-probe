@@ -184,7 +184,7 @@ impl AgentLink {
         let stop = self.stop.child_token();
         {
             let mut all = self.tunnels.lock().unwrap();
-            if all.len() >= 2 {
+            if all.len() >= vistart_probe_agent::wire::MAX_TUNNELS {
                 return Err("node tunnel capacity reached");
             }
             all.insert(

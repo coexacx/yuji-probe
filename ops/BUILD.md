@@ -1,6 +1,6 @@
 # Rust 源码构建
 
-普通宝塔安装使用完整 Release 安装包 bin/ 中的静态二进制（Git 源码树不携带二进制），无需 Rust、Cargo、Go、Node.js 或数据库。主控与 Agent 均为 Rust，PHP 8.0+ 负责安装向导和 HTTP 网关，Nginx 负责 TLS/WSS。
+普通宝塔安装使用完整 Release 安装包 bin/ 中的静态二进制（Git 源码树不携带二进制），无需 Rust、Cargo、Go、Node.js 或数据库。主控与 Agent 均为 Rust。原发行版使用 PHP 8.0+ 安装向导和 HTTP 网关；Nginx + Rust 发行版将这些内容编入主控并以 -web 启动，不需要 PHP。两版均由 Nginx 提供 TLS/WSS。
 
 ## 开发构建
 
@@ -11,6 +11,8 @@
 ```
 
 构建使用 Cargo.lock 锁定依赖，先运行格式检查、单元测试和 Clippy，再构建两种架构。正式版不要启用 `test-deployment`；该功能只为隔离测试服务改名，避免与生产 Agent 冲突。默认输出 `probe-linux-amd64`、`probe-linux-arm64` 与两个带版本号的 Agent。
+
+Nginx + Rust 发行版使用相同主控构建，-web 启用嵌入页面与网页安装，--install 从标准输入读取 JSON 完成 CLI 安装。构建前先生成前端资源并同步 app/view.html 与 public/assets，build.rs 会将它们编入主控二进制。
 
 控制器 CLI 与旧安装器兼容：`-state`、`-listen`、`-origin`、`-php-gateway`、`-daemon`。内部监听强制回环地址。`--version` 显示组件版本。
 
@@ -31,7 +33,7 @@ node build.mjs
 
 ## Agent 发布源
 
-主控从 https://github.com/coexacx/yuji-probe/releases/download/v0.9.2/ 获取 `stable.json`，先用内嵌 Ed25519 公钥验证签名，再验证精确版本、架构、文件名、长度与 SHA-256。校验失败会终止部署，不执行远端二进制。
+主控从 https://github.com/coexacx/yuji-probe/releases/download/v0.10.0/ 获取 `stable.json`，先用内嵌 Ed25519 公钥验证签名，再验证精确版本、架构、文件名、长度与 SHA-256。校验失败会终止部署，不执行远端二进制。
 
 发布下载仅允许固定仓库 HTTPS 与 GitHub 资产 CDN，最多跟随 4 次重定向。其他 HTTP 客户端仍不跟随重定向。
 
@@ -40,3 +42,5 @@ node build.mjs
 主题时间轴与终端调色板测试：
 
     node --test source/tests/seasons.test.mjs
+
+两个发行包使用 ops/package-release.py 的 --variant php 或 --variant rust 分别生成，必须输出到不同目录。签名私钥在源码树之外，正式发布 v0.10.0 与 rust-v0.10.0；后者使用 GitHub --latest=false，避免改变 PHP 版的 latest 更新通道。

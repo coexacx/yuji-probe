@@ -28,23 +28,28 @@ def trusted_file(path,limit):
         if not stat.S_ISREG(st.st_mode) or st.st_uid!=0 or st.st_mode&0o022 or st.st_size>limit:raise ValueError("untrusted updater file")
         with os.fdopen(fd,"rb",closefd=False) as f:return f.read(limit+1)
     finally:os.close(fd)
-def allowed(url,version):
+def release_tag(version,distribution="php"):
+    if distribution not in ("php","rust"):raise ValueError("invalid distribution")
+    return ("rust-v" if distribution=="rust" else "v")+version
+def package_name(version,distribution="php"):
+    return "yuji-probe-"+("rust" if distribution=="rust" else "panel")+"-"+version+".zip"
+def allowed(url,version,distribution="php"):
     u=urllib.parse.urlsplit(url)
     if u.scheme!="https" or u.username or u.password or u.port not in (None,443) or u.fragment:return False
-    if u.hostname=="github.com":return u.path.startswith(f"/{REPOSITORY}/releases/download/v{version}/") and not u.query
+    if u.hostname=="github.com":return u.path.startswith(f"/{REPOSITORY}/releases/download/{release_tag(version,distribution)}/") and not u.query
     return ((u.hostname=="release-assets.githubusercontent.com" and u.path.startswith("/github-production-release-asset/"))
       or(u.hostname=="objects.githubusercontent.com" and u.path.startswith("/github-production-release-asset-2e65be/")))
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self,*args,**kwargs):return None
-def download(version,name,limit,cache=None):
+def download(version,name,limit,cache=None,distribution="php"):
     if cache:
         path=pathlib.Path(cache)/name
         if path.is_file():return trusted_file(path,limit)
-    url=f"https://github.com/{REPOSITORY}/releases/download/v{version}/{name}"
+    url=f"https://github.com/{REPOSITORY}/releases/download/{release_tag(version,distribution)}/{name}"
     opener=urllib.request.build_opener(NoRedirect,urllib.request.ProxyHandler({}))
     started=time.monotonic()
     for _ in range(5):
-        if not allowed(url,version):raise ValueError("untrusted release redirect")
+        if not allowed(url,version,distribution):raise ValueError("untrusted release redirect")
         try:r=opener.open(urllib.request.Request(url,headers={"User-Agent":"Yuji-Probe-Updater"}),timeout=20)
         except urllib.error.HTTPError as e:
             if e.code not in (301,302,303,307,308):raise
@@ -61,18 +66,18 @@ def download(version,name,limit,cache=None):
                 out.extend(chunk)
                 if len(out)>limit:raise ValueError("release too large")
     raise ValueError("too many release redirects")
-def verify(manifest,version,tmp):
+def verify(manifest,version,tmp,distribution="php"):
     e=json.loads(manifest);payload=base64.b64decode(e["payload"],validate=True);sig=base64.b64decode(e["signature"],validate=True)
     if len(payload)>16384 or len(sig)!=64:raise ValueError("invalid signed manifest")
     (tmp/"key.der").write_bytes(bytes.fromhex("302a300506032b6570032100")+base64.b64decode(PUBLIC))
     (tmp/"payload").write_bytes(payload);(tmp/"signature").write_bytes(sig)
     subprocess.run(["openssl","pkeyutl","-verify","-pubin","-inkey",str(tmp/"key.der"),"-keyform","DER","-rawin","-in",str(tmp/"payload"),"-sigfile",str(tmp/"signature")],check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
     m=json.loads(payload);f=m["files"]["panel"]
-    if m["version"]!=version or f["name"]!=f"yuji-probe-panel-{version}.zip" or not re.fullmatch("[a-f0-9]{64}",f["sha256"]) or not 1024<=f["size"]<=64*1024*1024:raise ValueError("invalid release metadata")
+    if m["version"]!=version or f["name"]!=package_name(version,distribution) or not re.fullmatch("[a-f0-9]{64}",f["sha256"]) or not 1024<=f["size"]<=64*1024*1024:raise ValueError("invalid release metadata")
     return f
-def unpack(raw,version,tmp):
+def unpack(raw,version,tmp,distribution="php"):
     archive=tmp/"release.zip";archive.write_bytes(raw);target=tmp/"stage";target.mkdir()
-    prefix=f"yuji-probe-panel-{version}/";total=0
+    prefix=package_name(version,distribution)[:-4]+"/";total=0
     with zipfile.ZipFile(archive) as z:
         entries=z.infolist()
         if len(entries)>12000:raise ValueError("too many archive entries")
@@ -95,7 +100,8 @@ def unpack(raw,version,tmp):
             with z.open(info) as source,dest.open("xb") as f:shutil.copyfileobj(source,f,65536)
             dest.chmod(0o755 if pure.parts[0]=="bin" or name.endswith(".sh") else 0o644)
     for directory,_,_ in os.walk(target):os.chmod(directory,0o755)
-    for name in ["app/bootstrap.php","public/index.php","bin/probe-linux-amd64"]:
+    required=["bin/probe-linux-amd64","ops/templates/nginx-rust.conf"] if distribution=="rust" else ["app/bootstrap.php","public/index.php","bin/probe-linux-amd64"]
+    for name in required:
         if not (target/name).is_file():raise ValueError("release is incomplete")
     return target
 def relabel(cfg):
@@ -154,32 +160,36 @@ def replace_contents(target,source):
         else:entry.unlink()
     for entry in source.iterdir():os.rename(entry,target/entry.name)
 def check(cfg,version):
-    # A PHP-managed controller is started by the first page request.
-    try:
-        parsed=urllib.parse.urlsplit(cfg["origin"])
-        class LocalHTTPS(http.client.HTTPSConnection):
-            def connect(self):
-                raw=socket.create_connection(("127.0.0.1",self.port),timeout=self.timeout)
-                self.sock=self._context.wrap_socket(raw,server_hostname=self.host)
-        connection=LocalHTTPS(parsed.hostname,parsed.port or 443,timeout=8,context=ssl.create_default_context())
-        try:connection.request("GET","/api/session");connection.getresponse().read(1024)
-        finally:connection.close()
-    except Exception:pass
+    # PHP-FPM may not have created its socket when systemctl start returns.
+    # Retry the wake request as well as the direct controller health probe.
+    parsed=urllib.parse.urlsplit(cfg["origin"])
+    class LocalHTTPS(http.client.HTTPSConnection):
+        def connect(self):
+            raw=socket.create_connection(("127.0.0.1",self.port),timeout=self.timeout)
+            self.sock=self._context.wrap_socket(raw,server_hostname=self.host)
     key=(pathlib.Path(cfg["state"])/"app.key").read_bytes()
     gateway=hashlib.sha256(b"vistart-probe-php-gateway-v1:"+key).hexdigest()
-    for _ in range(35):
+    for attempt in range(35):
+        if attempt%3==0:
+            connection=LocalHTTPS(parsed.hostname,parsed.port or 443,timeout=8,context=ssl.create_default_context())
+            try:
+                connection.request("GET","/api/session");connection.getresponse().read(1024)
+            except Exception:pass
+            finally:connection.close()
         try:
             r=urllib.request.urlopen(urllib.request.Request("http://"+cfg["listen"]+"/_internal/health",headers={"X-Probe-Gateway":gateway}),timeout=2)
             with r:data=json.load(r)
-            if data.get("ok") and (version is None or data.get("version")==version):return
+            if data.get("ok") and data.get("origin")==cfg["origin"] and (version is None or data.get("version")==version):return
         except (OSError,ValueError):pass
         time.sleep(1)
     raise ValueError("updated controller failed health check")
+
 def install_helper(args):
     if not re.fullmatch("[a-z0-9-]{1,40}",args.name):raise ValueError("invalid instance name")
     root=pathlib.Path(args.root).resolve();state=pathlib.Path(args.state).resolve()
+    if state.name!="control" or state.parent in (pathlib.Path("/"),pathlib.Path("/var"),pathlib.Path("/var/lib"),pathlib.Path("/srv"),pathlib.Path("/opt")) or state.parent==root:raise ValueError("state must be a dedicated instance directory ending in /control")
     auth=state/"auth.json";owner=auth.stat()
-    if not root.is_dir() or not auth.is_file() or not (root/"public/index.php").is_file():raise ValueError("panel is not installed")
+    if not root.is_dir() or not auth.is_file() or not (root/("bin/probe-linux-amd64" if args.distribution=="rust" else "public/index.php")).is_file():raise ValueError("panel is not installed")
     if not re.fullmatch("[a-zA-Z0-9_.@-]+\\.service",args.service):raise ValueError("invalid service")
     origin=urllib.parse.urlsplit(args.origin)
     if origin.scheme!="https" or not origin.hostname or origin.username or origin.password or origin.query or origin.fragment or origin.path not in ("","/"):raise ValueError("invalid HTTPS origin")
@@ -187,6 +197,7 @@ def install_helper(args):
     private(BASE);private(CONF);LIB.mkdir(parents=True,exist_ok=True,mode=0o755);LIB.chmod(0o755)
     dest=LIB/"update-panel.py";atomic(dest,pathlib.Path(__file__).read_bytes(),mode=0o755)
     cfg={"name":args.name,"root":str(root),"state":str(state),"service":args.service,"origin":args.origin.rstrip("/"),"listen":args.listen,"uid":owner.st_uid,"gid":owner.st_gid}
+    cfg["distribution"]=args.distribution
     cp=CONF/(args.name+".json");atomic(cp,cfg)
     unit="yuji-probe-update-"+args.name
     if any("\n" in str(v) or "%" in str(v) for v in cfg.values()):raise ValueError("invalid instance configuration")
@@ -199,16 +210,18 @@ def install_helper(args):
 def apply(cfg,request,cache=None):
     work=BASE/cfg["name"];private(work);root=pathlib.Path(cfg["root"]);state=pathlib.Path(cfg["state"])
     prior=work/"previous-program";priorstate=work/"previous-state";meta=work/"previous.json"
+    distribution=cfg.get("distribution","php")
+    release_tag("0.0.0",distribution)
     action=request["action"];version=request.get("version","")
     if action not in ("update","rollback") or (action=="update" and not VERSION.fullmatch(version)):raise ValueError("invalid update request")
     if time.time()-request.get("at",0)>900 or request.get("at",0)>time.time()+60:raise ValueError("update request expired")
     with tempfile.TemporaryDirectory(prefix=".yuji-update-",dir=root.parent) as folder:
         tmp=pathlib.Path(folder);tmp.chmod(0o700)
         if action=="update":
-            manifest=download(version,"panel-stable.json",16384,cache);f=verify(manifest,version,tmp)
-            raw=download(version,f["name"],64*1024*1024,cache)
+            manifest=download(version,"panel-stable.json",16384,cache,distribution);f=verify(manifest,version,tmp,distribution)
+            raw=download(version,f["name"],64*1024*1024,cache,distribution)
             if len(raw)!=f["size"] or hashlib.sha256(raw).hexdigest()!=f["sha256"]:raise ValueError("release checksum mismatch")
-            target=unpack(raw,version,tmp);restore_state=None
+            target=unpack(raw,version,tmp,distribution);restore_state=None
         else:
             if not prior.is_dir() or not priorstate.is_dir():raise ValueError("no rollback snapshot")
             version=json.loads(trusted_file(meta,2048)).get("version")
@@ -292,7 +305,7 @@ def run(args):
 def main():
     if os.geteuid()!=0:raise SystemExit("Run this updater as root")
     os.umask(0o077)
-    a=argparse.ArgumentParser();a.add_argument("--configure",action="store_true");a.add_argument("--name");a.add_argument("--root");a.add_argument("--state");a.add_argument("--service");a.add_argument("--origin");a.add_argument("--listen",default="127.0.0.1:19281");a.add_argument("--run");a.add_argument("--release-dir")
+    a=argparse.ArgumentParser();a.add_argument("--configure",action="store_true");a.add_argument("--name");a.add_argument("--root");a.add_argument("--state");a.add_argument("--service");a.add_argument("--origin");a.add_argument("--listen",default="127.0.0.1:19281");a.add_argument("--run");a.add_argument("--release-dir");a.add_argument("--distribution",choices=["php","rust"],default="php")
     args=a.parse_args()
     if args.configure:install_helper(args)
     elif args.run:run(args)

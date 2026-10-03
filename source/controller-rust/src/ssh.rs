@@ -90,6 +90,8 @@ pub async fn connect<T: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
         inactivity_timeout: None,
         keepalive_interval: Some(Duration::from_secs(15)),
         keepalive_max: 3,
+        key_exchange_timeout: Some(Duration::from_secs(60)),
+        nodelay: true,
         ..Default::default()
     };
     cfg.preferred.key = algorithms(key.as_ref()).into();

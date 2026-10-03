@@ -11,8 +11,8 @@ use sha2::{Digest, Sha256};
 use std::{net::SocketAddr, time::Duration};
 use tokio::time::timeout;
 use zeroize::Zeroizing;
-const RELEASE_ORIGIN: &str = "https://github.com/coexacx/yuji-probe/releases/download/v0.9.2/";
-pub const AGENT_VERSION: &str = "0.2.1";
+const RELEASE_ORIGIN: &str = "https://github.com/coexacx/yuji-probe/releases/download/v0.10.0/";
+pub const AGENT_VERSION: &str = "0.2.2";
 #[derive(Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct Inspect {
@@ -277,7 +277,7 @@ fn allowed_release_url(url: &reqwest::Url) -> bool {
     match url.host_str() {
         Some("github.com") => {
             url.path()
-                .starts_with("/coexacx/yuji-probe/releases/download/v0.9.2/")
+                .starts_with("/coexacx/yuji-probe/releases/download/v0.10.0/")
                 && url.query().is_none()
         }
         Some("release-assets.githubusercontent.com") => {
@@ -570,7 +570,7 @@ mod tests {
     #[test]
     fn release_redirect_boundaries() {
         for url in [
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.9.2/stable.json",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.10.0/stable.json",
             "https://release-assets.githubusercontent.com/github-production-release-asset/1/abc?sig=example",
             "https://objects.githubusercontent.com/github-production-release-asset-2e65be/1/abc",
         ] {
@@ -580,13 +580,13 @@ mod tests {
             );
         }
         for url in [
-            "http://github.com/coexacx/yuji-probe/releases/download/v0.9.2/stable.json",
-            "https://github.com:444/coexacx/yuji-probe/releases/download/v0.9.2/stable.json",
-            "https://user:password@github.com/coexacx/yuji-probe/releases/download/v0.9.2/stable.json",
-            "https://github.com/coexacx/other/releases/download/v0.9.2/stable.json",
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.9.2/../../../login",
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.9.2/stable.json#fragment",
-            "https://github.com/coexacx/yuji-probe/releases/download/v0.9.2/stable.json?redirect=1",
+            "http://github.com/coexacx/yuji-probe/releases/download/v0.10.0/stable.json",
+            "https://github.com:444/coexacx/yuji-probe/releases/download/v0.10.0/stable.json",
+            "https://user:password@github.com/coexacx/yuji-probe/releases/download/v0.10.0/stable.json",
+            "https://github.com/coexacx/other/releases/download/v0.10.0/stable.json",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.10.0/../../../login",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.10.0/stable.json#fragment",
+            "https://github.com/coexacx/yuji-probe/releases/download/v0.10.0/stable.json?redirect=1",
             "https://release-assets.githubusercontent.com.evil.example/github-production-release-asset/1",
             "https://release-assets.githubusercontent.com/elsewhere/1",
             "https://127.0.0.1/github-production-release-asset/1",

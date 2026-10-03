@@ -15,10 +15,13 @@ mod nodes;
 mod offsite;
 mod operations;
 mod realtime;
+mod retained;
+mod setup;
 mod ssh;
 mod telegram;
 mod terminal;
 mod theme;
+mod web;
 use crate::{core::*, model::*};
 use std::{
     fs::{File, OpenOptions},
@@ -38,6 +41,8 @@ struct Options {
     worker: bool,
     init: bool,
     reset_mfa: bool,
+    web: bool,
+    install: bool,
 }
 impl Options {
     fn args(&self) -> Vec<String> {
@@ -49,6 +54,9 @@ impl Options {
             "-origin".into(),
             self.origin.clone(),
         ];
+        if self.web {
+            a.push("-web".into());
+        }
         if self.gateway {
             a.push("-php-gateway".into())
         }
@@ -66,6 +74,8 @@ fn options() -> Result<Options, &'static str> {
         worker: false,
         init: false,
         reset_mfa: false,
+        web: false,
+        install: false,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -80,6 +90,8 @@ fn options() -> Result<Options, &'static str> {
             }
             "-origin" => o.origin = args.next().ok_or("origin missing")?,
             "-php-gateway" => o.gateway = true,
+            "-web" => o.web = true,
+            "--install" => o.install = true,
             "-daemon" => o.daemon = true,
             "-supervise" => o.supervise = true,
             "-worker" => o.worker = true,
@@ -115,10 +127,20 @@ fn options() -> Result<Options, &'static str> {
             .map_err(|_| "working directory unavailable")?
             .join(o.dir)
     }
-    if [o.daemon, o.supervise, o.worker, o.init, o.reset_mfa]
-        .iter()
-        .filter(|v| **v)
-        .count()
+    if o.web && o.gateway {
+        return Err("web and PHP gateway modes are mutually exclusive");
+    }
+    if [
+        o.daemon,
+        o.supervise,
+        o.worker,
+        o.init,
+        o.reset_mfa,
+        o.install,
+    ]
+    .iter()
+    .filter(|v| **v)
+    .count()
         > 1
     {
         return Err("conflicting process mode");
@@ -229,6 +251,27 @@ if tokio::time::timeout(Duration::from_secs(5),child.wait()).await.is_err(){let 
 }
 fn run() -> Result<(), &'static str> {
     let o = options()?;
+    if o.web || o.install {
+        std::fs::create_dir_all(&o.dir).map_err(|_| "state directory unavailable")?;
+        std::fs::set_permissions(&o.dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|_| "state directory permissions unavailable")?;
+    }
+    if o.install {
+        use std::io::Read;
+        let _lock = lock(&o.dir)?;
+        let mut bytes = zeroize::Zeroizing::new(Vec::new());
+        std::io::stdin()
+            .take(4097)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "installation input unavailable")?;
+        if bytes.len() > 4096 {
+            return Err("installation input too large");
+        }
+        let input = serde_json::from_slice(&bytes).map_err(|_| "installation input invalid")?;
+        setup::initialize(&o.dir, input)?;
+        println!("Installation complete. Open the configured HTTPS origin to sign in.");
+        return Ok(());
+    }
     if o.reset_mfa {
         return reset_mfa(&o);
     }
@@ -252,6 +295,15 @@ fn run() -> Result<(), &'static str> {
             return supervise(&o).await;
         }
         let _lock = if o.worker { None } else { Some(lock(&o.dir)?) };
+        if o.web {
+            setup::recover(&o.dir)?;
+            if !o.dir.join("auth.json").exists() {
+                setup::serve(&o.dir, &o.origin, o.listen).await?;
+            }
+            if !o.dir.join("auth.json").exists() {
+                return Ok(());
+            }
+        }
         let app = App::new(o.dir, o.origin, o.gateway)?;
         let stop = app.0.stop.clone();
         tokio::spawn(async move {
