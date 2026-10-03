@@ -116,7 +116,7 @@ pub fn validate(r: &Request) -> Result<(), Problem> {
     }
     Ok(())
 }
-pub async fn respond(out: &mpsc::Sender<WS>, r: &Request, value: Result<Value, Problem>) {
+pub fn response(r: &Request, value: Result<Value, Problem>) -> WS {
     let data = match value {
         Ok(v) => json!({"type":"file_result","id":r.id,"action":r.action,"ok":true,"data":v}),
         Err(e) => {
@@ -129,7 +129,10 @@ pub async fn respond(out: &mpsc::Sender<WS>, r: &Request, value: Result<Value, P
     } else {
         raw
     };
-    let _ = timeout(Duration::from_secs(8), out.send(WS::Text(raw.into()))).await;
+    WS::Text(raw.into())
+}
+pub async fn respond(out: &mpsc::Sender<WS>, r: &Request, value: Result<Value, Problem>) {
+    let _ = timeout(Duration::from_secs(8), out.send(response(r, value))).await;
 }
 struct Limited<S> {
     inner: S,

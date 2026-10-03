@@ -4,7 +4,7 @@ import {setupLeaseFields,leaseInput,money,cycleLabel,showBilling} from "/assets/
 import {createInspectorUI} from "/assets/inspector-5d14e98d3224.js";
 import {createOperations} from "/assets/operations-2a02f5588e43.js";
 import {authenticatorCanvas} from "/assets/authenticator-19965621ba87.js";
-import {createTerminalUI} from "/assets/terminal-9cad8f0e1924.js";
+import {createTerminalUI} from "/assets/terminal-edfc7be03f5b.js";
 import {countries as allCountries} from "/assets/countries-3dabb5bbec57.js";
 import {createRenewalUI,formatExpiry,localExpiry} from "/assets/renewals-8bbd577cc65f.js";
 export function initAdmin(hooks){
@@ -27,7 +27,7 @@ export function initAdmin(hooks){
    const options={method,credentials:'same-origin',headers:{'Content-Type':'application/json'}};
    if(method!=='GET'){options.headers['X-CSRF-Token']=csrf;if(body!==undefined)options.body=JSON.stringify(body);}
    let response;
-   try{response=await fetch(path,options);}catch{throw Error('连接主控失败，请稍后重试');}
+   try{response=await fetch(path,options);}catch{const error=Error('连接主控失败，请稍后重试');error.network=true;throw error;}
    const data=await response.json().catch(()=>({error:'主控响应异常'}));
    if(epoch!==sessionEpoch){const error=Error('会话已更新，请重试');error.staleSession=true;throw error;}
    if(!response.ok){

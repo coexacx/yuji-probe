@@ -27,7 +27,7 @@ export function initAdmin(hooks){
    const options={method,credentials:'same-origin',headers:{'Content-Type':'application/json'}};
    if(method!=='GET'){options.headers['X-CSRF-Token']=csrf;if(body!==undefined)options.body=JSON.stringify(body);}
    let response;
-   try{response=await fetch(path,options);}catch{throw Error('连接主控失败，请稍后重试');}
+   try{response=await fetch(path,options);}catch{const error=Error('连接主控失败，请稍后重试');error.network=true;throw error;}
    const data=await response.json().catch(()=>({error:'主控响应异常'}));
    if(epoch!==sessionEpoch){const error=Error('会话已更新，请重试');error.staleSession=true;throw error;}
    if(!response.ok){

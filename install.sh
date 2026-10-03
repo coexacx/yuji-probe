@@ -4,8 +4,8 @@ set +x
 set -Eeuo pipefail
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 umask 077
-readonly YUJI_VERSION=0.9.1
-readonly YUJI_RELEASE_BASE=https://github.com/coexacx/yuji-probe/releases/download/v0.9.1
+readonly YUJI_VERSION=0.9.2
+readonly YUJI_RELEASE_BASE=https://github.com/coexacx/yuji-probe/releases/download/v0.9.2
 readonly YUJI_PUBLIC_KEY=o8+DdHbo82V7fxJEIiEhe5AK/frR91Fz5vjf/pDAnts=
 yuji_domain='' yuji_email='' yuji_accept_terms=0 yuji_cert='' yuji_key=''
 yuji_work='' yuji_changes=0 yuji_success=0 yuji_php_version=''

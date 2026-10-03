@@ -238,7 +238,7 @@ impl AgentLink {
             };
             let download = async {
                 while let Some(data) = incoming.recv().await {
-                    timeout(Duration::from_secs(5), writer.write_all(&data))
+                    timeout(Duration::from_secs(30), writer.write_all(&data))
                         .await
                         .map_err(|_| "tunnel write timeout")?
                         .map_err(|_| "tunnel write failed")?;
@@ -253,6 +253,19 @@ impl AgentLink {
         Ok(Tunnel { io: local, stop })
     }
 }
+// A delayed latency measurement must not tear down an authenticated agent
+// and all of its SSH tunnels. Only a matching, timely reply updates the gauge;
+// valid metrics still enforce the separate connection liveness deadline.
+fn latency_reply(pending: &mut Option<(String, Instant)>, nonce: &str, at: Instant) -> Option<f64> {
+    let (expected, sent) = pending.as_ref()?;
+    if !constant(expected, nonce) {
+        return None;
+    }
+    let elapsed = at.duration_since(*sent);
+    *pending = None;
+    (elapsed <= Duration::from_secs(10)).then(|| (elapsed.as_secs_f64() * 10000.0).round() / 10.0)
+}
+
 pub fn valid_metrics(m: &Metrics) -> bool {
     if !m.cpu.is_finite()
         || !(0.0..=100.0).contains(&m.cpu)
@@ -475,9 +488,9 @@ async fn agent_loop(app: App, id: String, digest: String, ws: WebSocket) {
     let result=async{let(mut sequence,mut frames,mut traffic)=(0u64,0usize,0usize);let mut window=Instant::now();let mut last=Instant::now();let mut rate_time=last;let mut credits=4.0f64;let mut ping:Option<(String,Instant)>=None;
  loop{let next=tokio::select!{_=link.stop.cancelled()=>return Ok::<(),&'static str>(()),_=tokio::time::sleep_until((last+Duration::from_secs(15)).into())=>return Err("metrics timeout"),v=reader.next()=>v};let raw=match next{Some(Ok(WS::Text(s)))=>s,Some(Ok(WS::Ping(b)))=>{timeout(Duration::from_secs(5),link.output.send(WS::Pong(b))).await.map_err(|_|"writer timeout")?.map_err(|_|"writer closed")?;continue},Some(Ok(WS::Pong(_)))=>continue,_=>return Err("agent connection closed")};let m=Message::parse(raw.as_bytes())?;let t=Instant::now();if t.duration_since(window)>=Duration::from_secs(1){window=t;frames=0;traffic=0}frames+=1;let bytes=m.bytes()?;traffic=traffic.saturating_add(bytes.len());if frames>2000||traffic>8*1024*1024{return Err("agent traffic limit")}
  match m.kind.as_str(){"metrics"=>{let metrics=m.metrics.ok_or("metrics missing")?;credits=(credits+t.duration_since(rate_time).as_secs_f64()*4.0).min(4.0);rate_time=t;if m.sequence<=sequence||credits<1.0||!valid_metrics(&metrics){return Err("invalid metrics")};credits-=1.0;sequence=m.sequence;let latency=metrics.latency_probe;{let mut i=app.lock();if !apply(&mut i,&id,metrics.clone()){return Err("node removed")}
-}last=t;let mut ack=Message::new("ack","");ack.sequence=sequence;send(&link.output,ack).await?;if latency&&ping.as_ref().is_none_or(|(_,at)|at.elapsed()>Duration::from_secs(10)){let nonce=token()[..32].to_string();send(&link.output,Message::new("ping",&nonce)).await?;ping=Some((nonce,Instant::now()));}},"pong"=>{let Some((nonce,start))=ping.take()else{return Err("unsolicited latency pong")};let elapsed=start.elapsed();if !constant(&nonce,&m.session)||elapsed>Duration::from_secs(10){return Err("invalid latency pong")}let ms=(elapsed.as_secs_f64()*10000.0).round()/10.0;let mut i=app.lock();if let Some(n)=i.data.nodes.iter_mut().find(|n|n.public.id==id){n.public.latency_ms=Some(ms);n.latency_at=now();}},"ssh_ready"=>{let mut all=link.tunnels.lock().unwrap();if let Some(slot)=all.get_mut(&m.session)&& let Some(ready)=slot.ready.take(){let _=ready.send(m.error.is_empty());}},"ssh_ack"=>{if let Some(slot)=link.tunnels.lock().unwrap().get(&m.session)&& slot.credits.available_permits()<WINDOW{slot.credits.add_permits(1);}},"ssh_data"=>{if let Some(slot)=link.tunnels.lock().unwrap().get(&m.session)&& slot.input.try_send(bytes).is_err(){slot.stop.cancel();}},"ssh_close"=>{if let Some(slot)=link.tunnels.lock().unwrap().get(&m.session){slot.stop.cancel();}},_=>return Err("unsupported agent message")}
+}last=t;let mut ack=Message::new("ack","");ack.sequence=sequence;send(&link.output,ack).await?;if latency&&ping.as_ref().is_none_or(|(_,at)|at.elapsed()>Duration::from_secs(10)){let nonce=token()[..32].to_string();send(&link.output,Message::new("ping",&nonce)).await?;ping=Some((nonce,Instant::now()));}},"pong"=>{if let Some(ms)=latency_reply(&mut ping,&m.session,Instant::now()){let mut i=app.lock();if let Some(n)=i.data.nodes.iter_mut().find(|n|n.public.id==id){n.public.latency_ms=Some(ms);n.latency_at=now();}}},"ssh_ready"=>{let mut all=link.tunnels.lock().unwrap();if let Some(slot)=all.get_mut(&m.session)&& let Some(ready)=slot.ready.take(){let _=ready.send(m.error.is_empty());}},"ssh_ack"=>{if let Some(slot)=link.tunnels.lock().unwrap().get(&m.session)&& slot.credits.available_permits()<WINDOW{slot.credits.add_permits(1);}},"ssh_data"=>{if let Some(slot)=link.tunnels.lock().unwrap().get(&m.session)&& slot.input.try_send(bytes).is_err(){slot.stop.cancel();}},"ssh_close"=>{if let Some(slot)=link.tunnels.lock().unwrap().get(&m.session){slot.stop.cancel();}},_=>return Err("unsupported agent message")}
  }}.await;
-    let _ = result;
+    let disconnect_reason = result.err();
     link.stop.cancel();
     writer_task.abort();
     let _ = writer_task.await;
@@ -487,6 +500,13 @@ async fn agent_loop(app: App, id: String, digest: String, ws: WebSocket) {
         if let Some(n) = i.data.nodes.iter_mut().find(|n| n.public.id == id) {
             n.public.online = false;
             n.public.latency_ms = None;
+        }
+        if let Some(reason) = disconnect_reason {
+            app.record(
+                &mut i,
+                "agent_connection_error",
+                &format!("{id} · {reason}"),
+            );
         }
         app.record(&mut i, "agent_disconnected", &id);
     }
@@ -534,6 +554,36 @@ pub fn ticket(app: &App, i: &mut Inner, c: &Context, body: &[u8]) -> ApiResult<A
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stale_latency_reply_does_not_consume_current_challenge() {
+        let at = Instant::now();
+        let mut pending = Some(("current".into(), at));
+        assert_eq!(
+            latency_reply(&mut pending, "previous", at + Duration::from_secs(1)),
+            None
+        );
+        assert!(pending.is_some());
+        assert_eq!(
+            latency_reply(&mut pending, "current", at + Duration::from_millis(123)),
+            Some(123.0)
+        );
+        assert!(pending.is_none());
+        assert_eq!(
+            latency_reply(&mut pending, "current", at + Duration::from_secs(2)),
+            None
+        );
+    }
+    #[test]
+    fn late_latency_measurement_is_ignored() {
+        let at = Instant::now();
+        let mut pending = Some(("late".into(), at));
+        assert_eq!(
+            latency_reply(&mut pending, "late", at + Duration::from_secs(11)),
+            None
+        );
+        assert!(pending.is_none());
+    }
+
     #[test]
     fn tunnel_framing_bounds() {
         assert!(Message::parse(br#"{"type":"ssh_data","data":"!"}"#).is_err());

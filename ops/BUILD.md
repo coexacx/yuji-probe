@@ -31,7 +31,7 @@ node build.mjs
 
 ## Agent 发布源
 
-主控从 https://github.com/coexacx/yuji-probe/releases/download/v0.9.1/ 获取 `stable.json`，先用内嵌 Ed25519 公钥验证签名，再验证精确版本、架构、文件名、长度与 SHA-256。校验失败会终止部署，不执行远端二进制。
+主控从 https://github.com/coexacx/yuji-probe/releases/download/v0.9.2/ 获取 `stable.json`，先用内嵌 Ed25519 公钥验证签名，再验证精确版本、架构、文件名、长度与 SHA-256。校验失败会终止部署，不执行远端二进制。
 
 发布下载仅允许固定仓库 HTTPS 与 GitHub 资产 CDN，最多跟随 4 次重定向。其他 HTTP 客户端仍不跟随重定向。
 

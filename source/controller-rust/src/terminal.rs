@@ -1,5 +1,6 @@
 use crate::{core::*, file_sessions, files, ssh};
 use axum::{
+    body::Bytes,
     extract::{
         ConnectInfo, State,
         ws::{Message as WS, WebSocket, WebSocketUpgrade},
@@ -89,6 +90,23 @@ impl Heartbeat {
     }
 }
 
+enum TerminalInput {
+    Data(Bytes),
+    Resize(u32, u32),
+}
+
+fn retryable(reason: &str) -> bool {
+    matches!(
+        reason,
+        "heartbeat_timeout"
+            | "input_stalled"
+            | "ssh_input_failed"
+            | "ssh_connection_lost"
+            | "agent_connection_lost"
+            | "browser_write_timeout"
+    )
+}
+
 type EndReason = Arc<Mutex<Option<&'static str>>>;
 fn ended(reason: &EndReason, value: &'static str) {
     reason.lock().unwrap().get_or_insert(value);
@@ -99,7 +117,10 @@ fn ending_message(reason: &str) -> (&'static str, &'static str) {
         "ssh_channel_closed" => ("closed", "远端 SSH 会话已结束"),
         "heartbeat_timeout" => ("error", "终端心跳长时间无响应，请检查网络后重新连接"),
         "authorization_lost" => ("error", "管理授权或节点连接已失效，请重新连接"),
-        "input_stalled" => ("error", "远端 SSH 长时间未接收输入，请重新连接"),
+        "input_stalled" => ("error", "远端 SSH 长时间未接收输入"),
+        "ssh_input_failed" | "ssh_connection_lost" => ("error", "SSH 连接意外中断"),
+        "agent_connection_lost" => ("error", "节点连接暂时中断"),
+        "input_queue_full" => ("error", "待发送输入过多，连接已关闭"),
         "browser_write_timeout" => ("error", "终端数据发送长时间受阻，请检查网络后重新连接"),
         "invalid_message" => ("error", "终端请求无效或超过速率限制，连接已关闭"),
         _ => ("error", "终端连接已中断，请重新连接"),
@@ -108,17 +129,6 @@ fn ending_message(reason: &str) -> (&'static str, &'static str) {
 
 fn size(cols: i64, rows: i64) -> (u32, u32) {
     (cols.clamp(20, 300) as u32, rows.clamp(5, 120) as u32)
-}
-async fn notice(out: &mpsc::Sender<WS>, kind: &str, message: &str) {
-    let mut v = json!({"type":kind,"message":message});
-    if kind == "ready" {
-        v["files"] = json!(true);
-    }
-    let _ = timeout(
-        Duration::from_secs(3),
-        out.send(WS::Text(v.to_string().into())),
-    )
-    .await;
 }
 pub async fn handler(
     State(app): State<App>,
@@ -363,6 +373,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     };
     let (mut ws_write, mut ws_read) = ws.split();
     let (out, mut send_queue) = mpsc::channel::<WS>(8);
+    let (control_out, mut control_queue) = mpsc::channel::<WS>(4);
     let credits = Arc::new(Semaphore::new(32));
     let probe = Arc::new(Mutex::new(Heartbeat::new(Instant::now())));
     let mut tasks = JoinSet::new();
@@ -394,12 +405,18 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                     let why = writer_reason.lock().unwrap().unwrap_or("connection_ended");
                     let (kind, message) = ending_message(why);
                     let _ = timeout(Duration::from_secs(1), async {
-                        ws_write.send(WS::Text(json!({"type":kind,"message":message}).to_string().into())).await?;
+                        ws_write.send(WS::Text(json!({"type":kind,"message":message,"reason":why,"retryable":retryable(why)}).to_string().into())).await?;
                         ws_write.send(WS::Close(None)).await
                     }).await;
                     break;
                 }
-                message = send_queue.recv() => {
+                message = async {
+                    tokio::select! {
+                        biased;
+                        control = control_queue.recv() => control,
+                        data = send_queue.recv() => data,
+                    }
+                } => {
                     let Some(message) = message else { break };
                     let result = tokio::select! {
                         biased;
@@ -451,6 +468,53 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         }
         file_service.cleanup().await;
     });
+    // Keep the WebSocket reader available for acknowledgements, heartbeats and
+    // cancellation even when the remote SSH receive window temporarily fills.
+    // Input remains ordered and bounded; an interrupted write is never replayed.
+    let (input_tx, mut input_rx) = mpsc::channel::<TerminalInput>(16);
+    if let Some(input) = shell_write.clone() {
+        let input_stop = stop.clone();
+        let input_check = check.clone();
+        let input_reason = reason.clone();
+        tasks.spawn(async move {
+            loop {
+                let message = tokio::select! {
+                    biased;
+                    _ = input_stop.cancelled() => break,
+                    message = input_rx.recv() => match message { Some(m) => m, None => break },
+                };
+                if !input_check() {
+                    ended(&input_reason, "authorization_lost");
+                    break;
+                }
+                let write = async {
+                    match message {
+                        TerminalInput::Data(bytes) => input.data_bytes(bytes).await,
+                        TerminalInput::Resize(cols, rows) => {
+                            input.window_change(cols, rows, 0, 0).await
+                        }
+                    }
+                };
+                let result = tokio::select! {
+                    biased;
+                    _ = input_stop.cancelled() => break,
+                    result = timeout(TERMINAL_IO_TIMEOUT, write) => result,
+                };
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => {
+                        ended(&input_reason, "ssh_input_failed");
+                        break;
+                    }
+                    Err(_) => {
+                        ended(&input_reason, "input_stalled");
+                        break;
+                    }
+                }
+            }
+            input_stop.cancel();
+        });
+    }
     let read_stop = stop.clone();
     let read_app = app.clone();
     let read_session = session.clone();
@@ -461,7 +525,8 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     let read_check = check.clone();
     let read_out = out.clone();
     let read_probe = probe.clone();
-    let input = shell_write.clone();
+    let read_control = control_out.clone();
+    let has_input = shell_write.is_some();
     let node_name = node.public.name.clone();
     let read_file_sessions = file_sessions_id.clone();
     tasks.spawn(async move {
@@ -469,12 +534,31 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         let (mut frames, mut bytes, mut terminal_bytes) = (0usize, 0usize, 0usize);
         let mut file_window = window;
         let mut file_count = 0;
+        let mut control_window = window;
+        let mut control_frames = 0usize;
+        // Validation errors share a bounded output queue but never wait in the
+        // reader. A client flooding requests cannot starve Pong or ACK handling.
+        let reject = |request: &files::Request, problem: files::Problem| {
+            if read_out.try_send(files::response(request, Err(problem))).is_ok() { true }
+            else { ended(&read_reason, "invalid_message"); false }
+        };
         loop {
             let msg = tokio::select! {_=read_stop.cancelled()=>break,m=ws_read.next()=>m};
             let Some(Ok(msg)) = msg else {
                 ended(&read_reason, "browser_connection_lost");
                 break;
             };
+            if matches!(&msg, WS::Ping(_) | WS::Pong(_)) {
+                if control_window.elapsed() >= Duration::from_secs(1) {
+                    control_window = Instant::now();
+                    control_frames = 0;
+                }
+                control_frames += 1;
+                if control_frames > 16 {
+                    ended(&read_reason, "invalid_message");
+                    break;
+                }
+            }
             match msg {
                 WS::Pong(bytes) => {
                     let alive = read_probe
@@ -501,7 +585,8 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                     continue;
                 }
                 WS::Ping(bytes) => {
-                    if read_out.send(WS::Pong(bytes)).await.is_err() {
+                    if read_control.try_send(WS::Pong(bytes)).is_err() {
+                        ended(&read_reason, "invalid_message");
                         break;
                     }
                     continue;
@@ -534,18 +619,23 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
             }
             match msg {
                 WS::Binary(raw) => {
-                    let Some(input) = input.as_ref() else {
+                    if !has_input {
                         continue;
-                    };
+                    }
                     terminal_bytes += raw.len();
                     if raw.len() > 16384 || terminal_bytes > 256 * 1024 {
+                        ended(&read_reason, "invalid_message");
                         break;
                     }
-                    if !matches!(
-                        timeout(TERMINAL_IO_TIMEOUT, input.data(raw.as_ref())).await,
-                        Ok(Ok(()))
-                    ) {
-                        ended(&read_reason, "input_stalled");
+                    if let Err(error) = input_tx.try_send(TerminalInput::Data(raw)) {
+                        ended(
+                            &read_reason,
+                            if matches!(error, mpsc::error::TrySendError::Full(_)) {
+                                "input_queue_full"
+                            } else {
+                                "ssh_input_failed"
+                            },
+                        );
                         break;
                     }
                 }
@@ -565,46 +655,31 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                             file_count += 1;
                         }
                         if inspect_only && !files::is_inspection(&r) {
-                            files::respond(
-                                &read_out,
-                                &r,
-                                Err(files::Problem {
+                            if !reject(&r, files::Problem {
                                     code: "permission",
                                     message: "此连接仅用于查看运行状态".into(),
-                                }),
-                            )
-                            .await;
+                                }) { break; }
                             continue;
                         }
                         if file_count > 90 {
-                            files::respond(
-                                &read_out,
-                                &r,
-                                Err(files::Problem {
+                            if !reject(&r, files::Problem {
                                     code: "rate",
                                     message: "文件操作过于频繁，请稍后重试".into(),
-                                }),
-                            )
-                            .await;
+                                }) { break; }
                             continue;
                         }
                         if let Err(e) = files::validate(&r) {
-                            files::respond(&read_out, &r, Err(e)).await;
+                            if !reject(&r, e) { break; }
                             continue;
                         }
                         match file_tx.try_send(r) {
                             Ok(_) => {}
                             Err(e) => {
                                 let r = e.into_inner();
-                                files::respond(
-                                    &read_out,
-                                    &r,
-                                    Err(files::Problem {
+                                if !reject(&r, files::Problem {
                                         code: "busy",
                                         message: "已有文件操作正在进行，请稍后重试".into(),
-                                    }),
-                                )
-                                .await;
+                                    }) { break; }
                             }
                         }
                         continue;
@@ -619,16 +694,27 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                             }
                         }
                         "resize" => {
-                            let Some(input) = input.as_ref() else {
+                            if !has_input {
                                 continue;
-                            };
+                            }
                             let (cols, rows) = size(control.cols, control.rows);
-                            let _ = input.window_change(cols, rows, 0, 0).await;
+                            if let Err(error) = input_tx.try_send(TerminalInput::Resize(cols, rows))
+                            {
+                                ended(
+                                    &read_reason,
+                                    if matches!(error, mpsc::error::TrySendError::Full(_)) {
+                                        "input_queue_full"
+                                    } else {
+                                        "ssh_input_failed"
+                                    },
+                                );
+                                break;
+                            }
                         }
                         "command" => {
-                            let Some(input) = input.as_ref() else {
+                            if !has_input {
                                 continue;
-                            };
+                            }
                             let script = {
                                 let mut i = read_app.lock();
                                 let command =
@@ -647,15 +733,27 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                             if let Some(script) = script {
                                 let command =
                                     format!("{}\n", script.trim_end_matches(['\r', '\n']));
-                                if !matches!(
-                                    timeout(TERMINAL_IO_TIMEOUT, input.data(command.as_bytes()))
-                                        .await,
-                                    Ok(Ok(()))
-                                ) {
+                                if command.len() > 16384 {
+                                    ended(&read_reason, "invalid_message");
+                                    break;
+                                }
+                                if let Err(error) = input_tx
+                                    .try_send(TerminalInput::Data(command.into_bytes().into()))
+                                {
+                                    ended(
+                                        &read_reason,
+                                        if matches!(error, mpsc::error::TrySendError::Full(_)) {
+                                            "input_queue_full"
+                                        } else {
+                                            "ssh_input_failed"
+                                        },
+                                    );
                                     break;
                                 }
                             } else {
-                                notice(&read_out, "notice", "命令不可用，请重新打开终端").await;
+                                if read_out.try_send(WS::Text(json!({"type":"notice","message":"命令不可用，请重新打开终端"}).to_string().into())).is_err() {
+                                    ended(&read_reason, "invalid_message"); break;
+                                }
                             }
                         }
                         "close" => {
@@ -676,6 +774,8 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     let output_app = app.clone();
     let output_file_sessions = file_sessions_id.clone();
     let output_reason = reason.clone();
+    let output_client = client.clone();
+    let output_link = link.clone();
     if let Some(mut shell_read) = shell_read {
         tasks.spawn(async move {
             let mut count = 0usize;
@@ -721,20 +821,38 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                             if exited {
                                 file_sessions::ending(&output_app, &output_file_sessions);
                             }
-                            ended(&output_reason, "ssh_channel_closed");
+                            let why = if exited {
+                                "ssh_channel_closed"
+                            } else if output_link.stop.is_cancelled() {
+                                "agent_connection_lost"
+                            } else if output_client.is_closed() {
+                                "ssh_connection_lost"
+                            } else {
+                                "ssh_channel_closed"
+                            };
+                            ended(&output_reason, why);
                             break;
                         }
                         _ => {}
                     }
                 }
             };
-            tokio::select! {_=output_stop.cancelled()=>{},_=result=>{ended(&output_reason, "ssh_channel_closed");}}
+            tokio::select! {
+                _ = output_stop.cancelled() => {},
+                _ = result => {
+                    let why = if output_link.stop.is_cancelled() { "agent_connection_lost" }
+                        else if output_client.is_closed() { "ssh_connection_lost" }
+                        else { "ssh_channel_closed" };
+                    ended(&output_reason, why);
+                }
+            }
             output_stop.cancel();
         });
     }
     let watch_stop = stop.clone();
-    let watch_out = out.clone();
+    let watch_out = control_out.clone();
     let watch_reason = reason.clone();
+    let watch_link = link.clone();
     tasks.spawn(async move {
         let mut timer = tokio::time::interval(Duration::from_secs(1));
         timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -743,7 +861,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                 _ = watch_stop.cancelled() => break,
                 _ = timer.tick() => {
                     if !check() {
-                        ended(&watch_reason, "authorization_lost");
+                        ended(&watch_reason, if watch_link.stop.is_cancelled() { "agent_connection_lost" } else { "authorization_lost" });
                         break;
                     }
                     let at = Instant::now();
@@ -756,13 +874,12 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                         break;
                     }
                     if let Some(value) = ping {
-                        let result = tokio::select! {
-                            _ = watch_stop.cancelled() => break,
-                            r = timeout(TERMINAL_IO_TIMEOUT, watch_out.send(WS::Ping(value.into()))) => r,
-                        };
-                        if !matches!(result, Ok(Ok(()))) {
-                            ended(&watch_reason, "browser_write_timeout");
-                            break;
+                        match watch_out.try_send(WS::Ping(value.into())) {
+                            Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {},
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                ended(&watch_reason, "browser_write_timeout");
+                                break;
+                            },
                         }
                     }
                 }
@@ -838,6 +955,30 @@ mod tests {
             assert!(!heartbeat.expired(at));
             let challenge = heartbeat.ping(at).unwrap();
             assert!(heartbeat.acknowledge(&challenge, at + Duration::from_secs(1)));
+        }
+    }
+    #[test]
+    fn reconnect_is_limited_to_transient_transport_failures() {
+        for reason in [
+            "user_disconnect",
+            "browser_closed",
+            "ssh_channel_closed",
+            "authorization_lost",
+            "invalid_message",
+            "input_queue_full",
+            "unknown",
+        ] {
+            assert!(!retryable(reason), "{reason}");
+        }
+        for reason in [
+            "heartbeat_timeout",
+            "input_stalled",
+            "ssh_input_failed",
+            "ssh_connection_lost",
+            "agent_connection_lost",
+            "browser_write_timeout",
+        ] {
+            assert!(retryable(reason), "{reason}");
         }
     }
     #[test]
