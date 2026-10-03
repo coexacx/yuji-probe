@@ -1,4 +1,4 @@
-# Rust 源码构建
+# 原 PHP 部署版的 Rust 内核构建
 
 普通宝塔安装使用完整 Release 安装包 bin/ 中的静态二进制（Git 源码树不携带二进制），无需 Rust、Cargo、Go、Node.js 或数据库。主控与 Agent 均为 Rust。原发行版使用 PHP 8.0+ 安装向导和 HTTP 网关；Nginx + Rust 发行版将这些内容编入主控并以 -web 启动，不需要 PHP。两版均由 Nginx 提供 TLS/WSS。
 
@@ -43,4 +43,4 @@ node build.mjs
 
     node --test source/tests/seasons.test.mjs
 
-两个发行包使用 ops/package-release.py 的 --variant php 或 --variant rust 分别生成，必须输出到不同目录。签名私钥在源码树之外，正式发布 v0.10.0 与 rust-v0.10.0；后者使用 GitHub --latest=false，避免改变 PHP 版的 latest 更新通道。
+本仓库维护 PHP 部署版，使用 ops/package-release.py --variant php 构建其安装包。Nginx + Rust 独立版的源码、构建和发行流程已迁至 [coexacx/yuji-probe-rust](https://github.com/coexacx/yuji-probe-rust)。旧 rust-v0.10.0 保留为历史版本。

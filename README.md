@@ -1,6 +1,8 @@
-# 羽迹探针
+# 羽迹探针 · PHP 部署版
 
-轻量的服务器监控面板。Rust 主控与 Agent，透明玻璃界面，支持浏览器 SSH、SFTP 和 Telegram 通知。无需数据库。
+本仓库维护 Nginx + PHP-FPM + Rust 主控与 Agent 的服务器监控面板，支持浏览器 SSH、SFTP 和 Telegram 通知，无需数据库。
+
+**Nginx + Rust 单二进制版已迁至独立仓库：[coexacx/yuji-probe-rust](https://github.com/coexacx/yuji-probe-rust)**。新安装、下载和后续更新请使用新仓库；已有 Rust 0.10.0 用户参照 [迁移步骤](https://github.com/coexacx/yuji-probe-rust/blob/main/docs/仓库迁移-0.10.1.md)。
 
 [下载发行版](https://github.com/coexacx/yuji-probe/releases) · [Linux 一键安装](docs/Linux一键安装.md) · [宝塔手动部署](docs/宝塔部署教程.md) · [构建源码](ops/BUILD.md)
 
@@ -23,10 +25,10 @@
 
 | 发行版 | 运行环境 | 安装 |
 | --- | --- | --- |
-| Nginx + Rust | Nginx + 一个 Rust 二进制，无 PHP | [独立发行版](https://github.com/coexacx/yuji-probe/releases/tag/rust-v0.10.0) · [手动/宝塔教程](docs/Nginx-Rust部署教程.md) |
+| Nginx + Rust | Nginx + 一个 Rust 二进制，无 PHP | [独立仓库](https://github.com/coexacx/yuji-probe-rust) · [手动/宝塔教程](https://github.com/coexacx/yuji-probe-rust/blob/main/docs/Nginx-Rust部署教程.md) |
 | Nginx + PHP + Rust | 保留原有 PHP 网关与 Rust 主控 | 以下原版安装方法 |
 
-两版共用业务与 Agent，各自检查和更新对应发行包。
+两个项目分别维护源码、Release、安装脚本和更新源。本仓库的 PHP 安装方法与 v* 更新通道继续保留。
 
 ## Linux 自动安装
 

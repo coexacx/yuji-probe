@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# 本仓库仅保留历史安装器。最新 Nginx + Rust 版：https://github.com/coexacx/yuji-probe-rust
 # 羽迹探针：用于受支持的全新 Linux/systemd 服务器。已有宝塔请使用 docs/Nginx-Rust部署教程.md。
 set +x
 set -Eeuo pipefail
