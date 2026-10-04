@@ -21,6 +21,7 @@ mod ssh;
 mod telegram;
 mod terminal;
 mod theme;
+mod tmux_stream;
 mod web;
 use crate::{core::*, model::*};
 use std::{

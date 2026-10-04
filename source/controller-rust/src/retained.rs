@@ -184,9 +184,22 @@ pub fn prefix(app: &App) -> String {
 fn name(id: &str) -> String {
     ssh::quote(&format!("yuji_{id}"))
 }
-pub fn attach_command(app: &App, id: &str) -> String {
+pub fn attach_command(app: &App, id: &str, cols: u32, rows: u32) -> String {
     assert!(valid(id));
-    format!("{} attach-session -d -t {}", prefix(app), name(id))
+
+    // One atomic tmux command queue: subscribe, resize, capture, then stream.
+    // The -C client forwards original PTY output instead of lossy screen redraws.
+    let target = ssh::quote(&format!("yuji_{id}:0.0"));
+    let state = ssh::quote(
+        "YUJI_STATE #{pane_id} #{cursor_x} #{cursor_y} #{?alternate_saved_x,#{alternate_saved_x},0} #{?alternate_saved_y,#{alternate_saved_y},0} #{?alternate_on,1,0} #{?cursor_flag,1,0} #{?insert_flag,1,0} #{?wrap_flag,1,0} #{?keypad_cursor_flag,1,0} #{?keypad_flag,1,0} #{?mouse_standard_flag,1,0} #{?mouse_button_flag,1,0} #{?mouse_all_flag,1,0} #{?mouse_utf8_flag,1,0} #{?mouse_sgr_flag,1,0} 1",
+    );
+    format!(
+        "{} -C attach-session -d -t {} ';' refresh-client -C {cols},{rows} ';' capture-pane -p -e -C -S -{} -t {target} ';' capture-pane -a -q -p -e -C -S -{} -t {target} ';' capture-pane -p -P -C -t {target} ';' display-message -p -t {target} {state}",
+        prefix(app),
+        name(id),
+        crate::tmux_stream::HISTORY,
+        crate::tmux_stream::HISTORY
+    )
 }
 pub async fn prepare(
     app: &App,
@@ -211,7 +224,7 @@ pub async fn prepare(
         );
         let hook = format!("run-shell -b {}", ssh::quote(&watch));
         format!(
-            "command -v tmux >/dev/null || exit 73; {base} new-session -d -s {} -x {cols} -y {rows} && {base} set-option -t {target} status off && {base} set-option -t {target} history-limit 2000 && {base} set-option -t {target} prefix None && {base} set-option -t {target} destroy-unattached off && {base} {hook}",
+            "command -v tmux >/dev/null || exit 73; {base} start-server ';' set-option -g history-limit 5000 ';' new-session -d -s {} -x {cols} -y {rows} && {base} set-option -t {target} status off && {base} set-option -t {target} prefix None && {base} set-option -t {target} destroy-unattached off && {base} {hook}",
             ssh::quote(&format!("yuji_{id}"))
         )
     } else {

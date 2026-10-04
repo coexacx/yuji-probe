@@ -1,4 +1,4 @@
-use crate::{core::*, file_sessions, files, retained, ssh};
+use crate::{core::*, file_sessions, files, retained, ssh, tmux_stream};
 use axum::{
     body::Bytes,
     extract::{
@@ -394,18 +394,9 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         let mut channel = client.channel_open_session().await.map_err(|_| ())?;
         let (cols, rows) = size(first.cols, first.rows);
         channel
-            .request_pty(
+            .exec(
                 true,
-                "xterm-256color",
-                cols,
-                rows,
-                0,
-                0,
-                &[
-                    (russh::Pty::ECHO, 1),
-                    (russh::Pty::TTY_OP_ISPEED, 14400),
-                    (russh::Pty::TTY_OP_OSPEED, 14400),
-                ],
+                retained::attach_command(&app, &shell_session, cols, rows),
             )
             .await
             .map_err(|_| ())?;
@@ -416,18 +407,22 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                 _ => {}
             }
         }
-        channel
-            .exec(true, retained::attach_command(&app, &shell_session))
-            .await
-            .map_err(|_| ())?;
-        loop {
+        let mut stream = tmux_stream::Stream::new(cols, rows);
+        let mut initial = Vec::new();
+        while !stream.ready() {
             match channel.wait().await {
-                Some(ChannelMsg::Success) => break,
-                Some(ChannelMsg::Failure) | None => return Err(()),
+                Some(ChannelMsg::Data { data }) => {
+                    initial.extend(stream.feed(data.as_ref()).map_err(|cause| {
+                        eprintln!("Terminal history unavailable: {cause}");
+                    })?);
+                }
+                Some(ChannelMsg::Failure | ChannelMsg::Close | ChannelMsg::Eof) | None => {
+                    return Err(());
+                }
                 _ => {}
             }
         }
-        Ok(channel)
+        Ok((channel, stream, initial))
     };
     let inspect_only = first.mode == "inspect";
     let channel = if inspect_only {
@@ -450,9 +445,9 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
             }
         }
     };
-    let (shell_read, shell_write) = if let Some(channel) = channel {
+    let (shell_read, shell_write) = if let Some((channel, stream, initial)) = channel {
         let (r, w) = channel.split();
-        (Some(r), Some(Arc::new(w)))
+        (Some((r, stream, initial)), Some(Arc::new(w)))
     } else {
         (None, None)
     };
@@ -554,6 +549,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
         let input_stop = stop.clone();
         let input_check = check.clone();
         let input_reason = reason.clone();
+        let input_shell = shell_session.clone();
         tasks.spawn(async move {
             loop {
                 let message = tokio::select! {
@@ -567,9 +563,13 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                 }
                 let write = async {
                     match message {
-                        TerminalInput::Data(bytes) => input.data_bytes(bytes).await,
+                        TerminalInput::Data(bytes) => {
+                            input
+                                .data_bytes(tmux_stream::input(&input_shell, &bytes))
+                                .await
+                        }
                         TerminalInput::Resize(cols, rows) => {
-                            input.window_change(cols, rows, 0, 0).await
+                            input.data_bytes(tmux_stream::resize(cols, rows)).await
                         }
                     }
                 };
@@ -856,48 +856,82 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
     let output_reason = reason.clone();
     let output_client = client.clone();
     let output_link = link.clone();
-    if let Some(mut shell_read) = shell_read {
+    if let Some((mut shell_read, mut stream, initial)) = shell_read {
         tasks.spawn(async move {
             let mut count = 0usize;
             let mut window = Instant::now();
             let result = async {
                 let mut exited = false;
-                while let Some(msg) = shell_read.wait().await {
-                    match msg {
-                        ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
-                            for chunk in data.chunks(16384) {
-                                if window.elapsed() >= Duration::from_secs(1) {
-                                    window = Instant::now();
-                                    count = 0;
-                                }
-                                if count + chunk.len() > 256 * 1024 {
-                                    tokio::time::sleep(
-                                        Duration::from_secs(1).saturating_sub(window.elapsed()),
-                                    )
-                                    .await;
-                                    window = Instant::now();
-                                    count = 0;
-                                }
-                                let Ok(credit) = credits.acquire().await else {
-                                    return;
-                                };
-                                credit.forget();
-                                if !matches!(
-                                    timeout(
-                                        TERMINAL_IO_TIMEOUT,
-                                        output.send(WS::Binary(chunk.to_vec().into()))
-                                    )
-                                    .await,
-                                    Ok(Ok(()))
-                                ) {
-                                    ended(&output_reason, "browser_write_timeout");
-                                    return;
-                                }
-                                count += chunk.len();
+                let mut finished = false;
+                let mut pending = initial;
+                let mut since = Instant::now();
+                // Coalesce small PTY writes for at most 8 ms. This bounds browser
+                // frames/ACKs during bursts without delaying heartbeat handling.
+                let coalesce = Duration::from_millis(8);
+                loop {
+                    if !pending.is_empty()
+                        && (pending.len() >= 16384 || since.elapsed() >= coalesce || finished)
+                    {
+                        for chunk in pending.chunks(16384) {
+                            if window.elapsed() >= Duration::from_secs(1) {
+                                window = Instant::now();
+                                count = 0;
                             }
+                            if count + chunk.len() > 256 * 1024 {
+                                tokio::time::sleep(
+                                    Duration::from_secs(1).saturating_sub(window.elapsed()),
+                                )
+                                .await;
+                                window = Instant::now();
+                                count = 0;
+                            }
+                            let Ok(credit) = credits.acquire().await else {
+                                return;
+                            };
+                            credit.forget();
+                            if !matches!(
+                                timeout(
+                                    TERMINAL_IO_TIMEOUT,
+                                    output.send(WS::Binary(chunk.to_vec().into()))
+                                )
+                                .await,
+                                Ok(Ok(()))
+                            ) {
+                                ended(&output_reason, "browser_write_timeout");
+                                return;
+                            }
+                            count += chunk.len();
                         }
-                        ChannelMsg::ExitStatus { .. } => exited = true,
-                        ChannelMsg::Close => {
+                        pending.clear();
+                    }
+                    if finished {
+                        break;
+                    }
+                    let message = if pending.is_empty() {
+                        shell_read.wait().await
+                    } else {
+                        match timeout(coalesce.saturating_sub(since.elapsed()), shell_read.wait())
+                            .await
+                        {
+                            Ok(message) => message,
+                            Err(_) => continue,
+                        }
+                    };
+                    match message {
+                        Some(ChannelMsg::Data { data }) => match stream.feed(data.as_ref()) {
+                            Ok(data) => {
+                                if pending.is_empty() {
+                                    since = Instant::now();
+                                }
+                                pending.extend(data);
+                            }
+                            Err(_) => {
+                                ended(&output_reason, "ssh_channel_closed");
+                                finished = true;
+                            }
+                        },
+                        Some(ChannelMsg::ExitStatus { .. }) => exited = true,
+                        Some(ChannelMsg::Close) | None => {
                             if exited
                                 && !output_app
                                     .lock()
@@ -917,7 +951,7 @@ async fn run(app: App, session: Session, pending: OwnedSemaphorePermit, mut ws: 
                                 "ssh_channel_closed"
                             };
                             ended(&output_reason, why);
-                            break;
+                            finished = true;
                         }
                         _ => {}
                     }
